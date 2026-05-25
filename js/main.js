@@ -363,7 +363,8 @@ planet.add(starTheFox);
 
 const star = {
   position: new THREE.Vector3(0, SURFACE_MAX_R, 0),
-  forward: new THREE.Vector3(0, 0, 1),
+  forward: new THREE.Vector3(0, 0, 1),          // body facing direction (smoothly chases targetForward)
+  targetForward: new THREE.Vector3(0, 0, 1),    // direction Star is currently walking toward (set from input)
   walkPhase: 0,
   // Jump state — radial offset above the surface
   airHeight: 0,
@@ -371,8 +372,14 @@ const star = {
   airborne: false,
 };
 
+// Camera frame, independent from Star's facing — gets rotated by mouse/touch
+// drag. Joystick input is interpreted in this frame so pushing "back" on the
+// stick walks Star toward the camera (Roblox-style).
+const camForward = new THREE.Vector3(0, 0, 1);
+
 const STAR_JUMP_VEL = 5.5;     // initial radial velocity (units/sec)
 const STAR_GRAVITY = 16;       // radial gravity (units/sec^2)
+const STAR_TURN_RATE = 10;     // how fast star.forward chases star.targetForward (rad/sec)
 
 // Place exactly on the displaced surface
 {
@@ -2160,23 +2167,71 @@ window.addEventListener('keyup', (e) => {
   input[action] = false;
 });
 
-document.querySelectorAll('.ctrl').forEach((btn) => {
-  const action = btn.dataset.action;
-  const press = (e) => {
+// Virtual joystick: pointerdown anywhere on the base captures the pointer,
+// pointermove updates the knob position. inputX/inputY are normalized to
+// [-1, 1] with magnitude clamped to 1. inputY > 0 = forward in camera frame.
+const joystick = {
+  active: false,
+  pointerId: null,
+  centerX: 0,
+  centerY: 0,
+  radius: 1,
+  inputX: 0,
+  inputY: 0,
+};
+const joystickBase = document.querySelector('.joystick');
+const joystickKnob = document.querySelector('.joystick-knob');
+
+function resetJoystick() {
+  joystick.active = false;
+  joystick.pointerId = null;
+  joystick.inputX = 0;
+  joystick.inputY = 0;
+  if (joystickKnob) joystickKnob.style.transform = 'translate(0px, 0px)';
+  if (joystickBase) joystickBase.classList.remove('is-active');
+}
+
+function joystickUpdate(clientX, clientY) {
+  let dx = clientX - joystick.centerX;
+  let dy = clientY - joystick.centerY;
+  const maxR = joystick.radius * 0.6;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist > maxR) {
+    dx = (dx / dist) * maxR;
+    dy = (dy / dist) * maxR;
+  }
+  if (joystickKnob) joystickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+  joystick.inputX = dx / maxR;
+  joystick.inputY = -dy / maxR; // invert: screen-up is forward
+}
+
+if (joystickBase) {
+  joystickBase.addEventListener('pointerdown', (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
     e.preventDefault();
-    input[action] = true;
-    btn.classList.add('is-pressed');
-    btn.setPointerCapture?.(e.pointerId);
+    joystick.active = true;
+    joystick.pointerId = e.pointerId;
+    const rect = joystickBase.getBoundingClientRect();
+    joystick.centerX = rect.left + rect.width / 2;
+    joystick.centerY = rect.top + rect.height / 2;
+    joystick.radius = rect.width / 2;
+    joystickBase.classList.add('is-active');
+    joystickBase.setPointerCapture?.(e.pointerId);
+    joystickUpdate(e.clientX, e.clientY);
+  });
+  joystickBase.addEventListener('pointermove', (e) => {
+    if (!joystick.active || e.pointerId !== joystick.pointerId) return;
+    joystickUpdate(e.clientX, e.clientY);
+  });
+  const release = (e) => {
+    if (e.pointerId !== joystick.pointerId) return;
+    joystickBase.releasePointerCapture?.(e.pointerId);
+    resetJoystick();
   };
-  const release = () => {
-    input[action] = false;
-    btn.classList.remove('is-pressed');
-  };
-  btn.addEventListener('pointerdown', press);
-  btn.addEventListener('pointerup', release);
-  btn.addEventListener('pointercancel', release);
-  btn.addEventListener('pointerleave', release);
-});
+  joystickBase.addEventListener('pointerup', release);
+  joystickBase.addEventListener('pointercancel', release);
+  joystickBase.addEventListener('pointerleave', release);
+}
 
 function triggerJump() {
   if (!star.airborne) {
@@ -2208,9 +2263,12 @@ const _mouseUp = new THREE.Vector3();
 
 // Yaw + pitch from any input source (mouse-lock or touch drag).
 function applyLookDelta(dx, dy, sens) {
+  // Rotate the camera frame, NOT the character. This lets the camera orbit
+  // around Star so she can face the camera when the player pulls the stick
+  // toward themselves.
   _mouseUp.copy(star.position).normalize();
-  star.forward.applyAxisAngle(_mouseUp, -dx * sens);
-  star.forward.projectOnPlane(_mouseUp).normalize();
+  camForward.applyAxisAngle(_mouseUp, -dx * sens);
+  camForward.projectOnPlane(_mouseUp).normalize();
 
   camPitch -= dy * sens;
   if (camPitch < CAM_PITCH_MIN) camPitch = CAM_PITCH_MIN;
@@ -2626,8 +2684,13 @@ function updateCamera() {
   planet.updateMatrixWorld();
   starTheFox.getWorldPosition(_starWorld);
 
+  // Re-project camForward onto Star's current tangent plane (the planet
+  // surface direction under her position) before transforming to world.
+  const _upL = _settleDir.copy(star.position).normalize();
+  camForward.projectOnPlane(_upL).normalize();
+
   _upWorld.copy(star.position).normalize().transformDirection(planet.matrixWorld).normalize();
-  _fwdWorld.copy(star.forward).transformDirection(planet.matrixWorld).normalize();
+  _fwdWorld.copy(camForward).transformDirection(planet.matrixWorld).normalize();
   _rightWorld.crossVectors(_upWorld, _fwdWorld).normalize();
 
   _pivot.copy(_starWorld).addScaledVector(_upWorld, CAM_LOOK_RAISE);
@@ -2661,6 +2724,10 @@ onResize();
 
 const _up = new THREE.Vector3();
 const _moveAxis = new THREE.Vector3();
+const _moveDir = new THREE.Vector3();
+const _camFwdTangent = new THREE.Vector3();
+const _camRightTangent = new THREE.Vector3();
+const _turnAxis = new THREE.Vector3();
 const _intendedPos = new THREE.Vector3();
 const _intendedDir = new THREE.Vector3();
 const clock = new THREE.Clock();
@@ -2671,21 +2738,39 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.05);
   const t = clock.elapsedTime;
 
-  const turn = (input.left ? 1 : 0) - (input.right ? 1 : 0);
-  const move = (input.fwd ? 1 : 0) - (input.back ? 1 : 0);
+  // Combine joystick + keyboard into a single 2D input vector in camera frame.
+  // x = strafe (left/right), y = forward/back.
+  let inputX = joystick.inputX;
+  let inputY = joystick.inputY;
+  if (input.fwd)   inputY += 1;
+  if (input.back)  inputY -= 1;
+  if (input.right) inputX += 1;
+  if (input.left)  inputX -= 1;
+  const inputMagRaw = Math.sqrt(inputX * inputX + inputY * inputY);
+  if (inputMagRaw > 1) {
+    inputX /= inputMagRaw;
+    inputY /= inputMagRaw;
+  }
+  const inputMag = Math.min(1, inputMagRaw);
 
   _up.copy(star.position).normalize();
 
-  if (turn !== 0) {
-    star.forward.applyAxisAngle(_up, turn * TURN_SPEED * dt);
-  }
-  star.forward.projectOnPlane(_up).normalize();
+  // Camera-tangent frame at Star's position
+  _camFwdTangent.copy(camForward).projectOnPlane(_up).normalize();
+  _camRightTangent.crossVectors(_up, _camFwdTangent).normalize();
 
-  if (move !== 0) {
-    // moveAxis = up × forward so a positive angle rotates Star's position
-    // toward her forward direction (W = walk forward, S = walk backward)
-    _moveAxis.crossVectors(_up, star.forward).normalize();
-    const angle = move * WALK_SPEED * dt;
+  if (inputMag > 0.05) {
+    // moveDir = camFwd * inputY + camRight * inputX (relative to camera frame)
+    _moveDir.set(0, 0, 0)
+      .addScaledVector(_camFwdTangent, inputY)
+      .addScaledVector(_camRightTangent, inputX)
+      .normalize();
+
+    // Star wants to face the direction she's moving (Roblox-style)
+    star.targetForward.copy(_moveDir);
+
+    _moveAxis.crossVectors(_up, _moveDir).normalize();
+    const angle = WALK_SPEED * dt * inputMag;
 
     _intendedPos.copy(star.position).applyAxisAngle(_moveAxis, angle);
     _intendedDir.copy(_intendedPos).normalize();
@@ -2694,7 +2779,24 @@ function animate() {
     resolveCollisions(_intendedPos);
 
     star.position.copy(_intendedPos);
-    star.forward.applyAxisAngle(_moveAxis, angle);
+  }
+
+  // Smoothly rotate star.forward toward star.targetForward (capped per frame).
+  star.forward.projectOnPlane(_up).normalize();
+  star.targetForward.projectOnPlane(_up).normalize();
+  const cosAng = Math.max(-1, Math.min(1, star.forward.dot(star.targetForward)));
+  const ang = Math.acos(cosAng);
+  if (ang > 0.001) {
+    const stepFrac = Math.min(1, (STAR_TURN_RATE * dt) / ang);
+    const stepAngle = stepFrac * ang;
+    _turnAxis.crossVectors(star.forward, star.targetForward);
+    if (_turnAxis.lengthSq() < 1e-6) {
+      _turnAxis.copy(_up); // 180° flip — pick local up as the axis
+    } else {
+      _turnAxis.normalize();
+    }
+    star.forward.applyAxisAngle(_turnAxis, stepAngle);
+    star.forward.projectOnPlane(_up).normalize();
   }
 
   // Water current (gentle drift while inside any pond)
@@ -2716,8 +2818,8 @@ function animate() {
 
   // -------- Fox animation --------
   const fx = starTheFox.userData;
-  const moving = move !== 0;
-  const walkAmt = moving ? 1 : 0;
+  const moving = inputMag > 0.05;
+  const walkAmt = moving ? inputMag : 0;
 
   if (star.inWater) {
     // Swim cycle: paddle all 4 legs, anti-phase per side. Body upright

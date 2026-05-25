@@ -658,59 +658,53 @@ body.is-locked .hint {
   background: rgba(255, 255, 255, 0.32);
 }
 
-/* ------- Movement D-pad ------- */
+/* ------- Movement joystick (bottom-left) ------- */
 
-.controls {
-  position: fixed;
-  bottom: 1.5rem;
-  right: 1.5rem;
-  display: grid;
-  grid-template-columns: repeat(3, 58px);
-  grid-template-rows: repeat(3, 58px);
-  gap: 6px;
-  z-index: 10;
-  touch-action: none;
-  user-select: none;
-}
-
-.ctrl {
-  background: rgba(255, 255, 255, 0.10);
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  color: rgba(255, 255, 255, 0.88);
-  border-radius: 50%;
-  font-size: 1.25rem;
-  font-family: inherit;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  transition: background 120ms ease, transform 120ms ease;
-  padding: 0;
-}
-
-.ctrl:hover {
-  background: rgba(255, 255, 255, 0.18);
-}
-
-.ctrl:active,
-.ctrl.is-pressed {
-  background: rgba(255, 255, 255, 0.32);
-  transform: scale(0.94);
-}
-
-.ctrl-up    { grid-column: 2; grid-row: 1; }
-.ctrl-left  { grid-column: 1; grid-row: 2; }
-.ctrl-right { grid-column: 3; grid-row: 2; }
-.ctrl-down  { grid-column: 2; grid-row: 3; }
-
-/* ------- Jump button ------- */
-.jump-btn {
+.joystick {
   position: fixed;
   bottom: 1.5rem;
   left: 1.5rem;
-  width: 92px;
-  height: 92px;
+  width: 138px;
+  height: 138px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  z-index: 10;
+  touch-action: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.joystick.is-active {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.45);
+}
+
+.joystick-knob {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  pointer-events: none;
+  will-change: transform;
+  transition: background 100ms ease;
+}
+
+.joystick.is-active .joystick-knob {
+  background: rgba(255, 255, 255, 0.38);
+}
+
+/* ------- Jump button (bottom-right) ------- */
+.jump-btn {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  width: 100px;
+  height: 100px;
   border-radius: 50%;
   background: rgba(255, 230, 120, 0.15);
   border: 1px solid rgba(255, 230, 120, 0.55);
@@ -740,13 +734,14 @@ body.is-locked .hint {
   box-shadow: 0 0 18px 2px rgba(255, 230, 120, 0.45);
 }
 
-/* When the sidebar is open on desktop, push the D-pad left so it doesn't overlap */
-body.edit-mode .controls {
+/* When the sidebar is open on desktop, push the jump button left so it doesn't overlap */
+body.edit-mode .jump-btn {
   right: 17rem;
 }
 
-/* Hide jump while pointer-lock is engaged (mouse mode, immersive look) */
+/* Hide controls while pointer-lock is engaged (mouse mode, immersive look) */
 body.is-locked .jump-btn { opacity: 0.35; }
+body.is-locked .joystick { opacity: 0.35; }
 
 .hint {
   position: fixed;
@@ -777,22 +772,22 @@ body.is-locked .jump-btn { opacity: 0.35; }
   .sidebar-list { grid-template-columns: repeat(4, 1fr); }
   .sidebar-coming { display: none; }
 
-  body.edit-mode .controls { right: 1rem; bottom: 14rem; }
-  body.edit-mode .jump-btn { bottom: 14rem; }
+  body.edit-mode .jump-btn { bottom: 14rem; right: 1rem; }
+  body.edit-mode .joystick { bottom: 14rem; left: 1rem; }
 
-  .controls {
+  .joystick {
     bottom: 1rem;
-    right: 1rem;
-    grid-template-columns: repeat(3, 64px);
-    grid-template-rows: repeat(3, 64px);
+    left: 1rem;
+    width: 130px;
+    height: 130px;
   }
 
   .jump-btn {
     bottom: 1rem;
-    left: 1rem;
-    width: 84px;
-    height: 84px;
-    font-size: 0.85rem;
+    right: 1rem;
+    width: 92px;
+    height: 92px;
+    font-size: 0.9rem;
   }
 
   .hint {

@@ -92,16 +92,13 @@
     <button type="button" data-action="delete" aria-label="Delete">Delete</button>
   </div>
 
-  <div class="controls" aria-label="Star the Fox movement controls">
-    <button class="ctrl ctrl-up"    data-action="fwd"   aria-label="Walk forward">&#9650;</button>
-    <button class="ctrl ctrl-left"  data-action="left"  aria-label="Turn left">&#9664;</button>
-    <button class="ctrl ctrl-right" data-action="right" aria-label="Turn right">&#9654;</button>
-    <button class="ctrl ctrl-down"  data-action="back"  aria-label="Walk backward">&#9660;</button>
+  <div class="joystick" role="presentation" aria-label="Movement joystick">
+    <div class="joystick-knob"></div>
   </div>
 
   <button class="jump-btn" type="button" aria-label="Jump">Jump</button>
 
-  <p class="hint">Arrows or swipe to look &middot; Tap Jump or press Space &middot; Build for the menu</p>
+  <p class="hint">Joystick or WASD to move &middot; Tap Jump or press Space &middot; Drag screen to look around</p>
 
   <script type="module" src="js/main.js"></script>
 </body>
