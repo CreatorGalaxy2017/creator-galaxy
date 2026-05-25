@@ -210,8 +210,127 @@ function createStarTheFox() {
 }
 
 const starTheFox = createStarTheFox();
-starTheFox.position.set(0, PLANET_RADIUS + PLANET_AMPLITUDE + 0.02, 0);
 planet.add(starTheFox);
+
+const SURFACE_RADIUS = PLANET_RADIUS + PLANET_AMPLITUDE + 0.02;
+
+const star = {
+  position: new THREE.Vector3(0, SURFACE_RADIUS, 0),
+  forward: new THREE.Vector3(0, 0, 1),
+  walkSpeed: 0.75,
+  turnSpeed: 1.9,
+  walkPhase: 0,
+};
+
+const _right = new THREE.Vector3();
+const _basis = new THREE.Matrix4();
+const _bobAxis = new THREE.Vector3();
+
+function applyStarTransform(bob = 0) {
+  const up = star.position.clone().normalize();
+  star.forward.projectOnPlane(up).normalize();
+  _right.crossVectors(up, star.forward).normalize();
+  _basis.makeBasis(_right, up, star.forward);
+  starTheFox.quaternion.setFromRotationMatrix(_basis);
+
+  _bobAxis.copy(up).multiplyScalar(bob);
+  starTheFox.position.copy(star.position).add(_bobAxis);
+}
+applyStarTransform();
+
+function buildStarfield(count = 900, innerR = 40, outerR = 70) {
+  const positions = new Float32Array(count * 3);
+  const v = new THREE.Vector3();
+  for (let i = 0; i < count; i++) {
+    v.set(Math.random() * 2 - 1, Math.random() * 2 - 1, Math.random() * 2 - 1);
+    if (v.lengthSq() < 0.0001) v.set(1, 0, 0);
+    v.normalize().multiplyScalar(innerR + Math.random() * (outerR - innerR));
+    positions[i * 3] = v.x;
+    positions[i * 3 + 1] = v.y;
+    positions[i * 3 + 2] = v.z;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const mat = new THREE.PointsMaterial({
+    color: 0xffffff,
+    size: 0.25,
+    sizeAttenuation: true,
+    transparent: true,
+    opacity: 0.75,
+    depthWrite: false,
+  });
+  return new THREE.Points(geo, mat);
+}
+scene.add(buildStarfield());
+
+const input = { fwd: false, back: false, left: false, right: false };
+
+const KEY_MAP = {
+  KeyW: 'fwd', ArrowUp: 'fwd',
+  KeyS: 'back', ArrowDown: 'back',
+  KeyA: 'left', ArrowLeft: 'left',
+  KeyD: 'right', ArrowRight: 'right',
+};
+
+window.addEventListener('keydown', (e) => {
+  const action = KEY_MAP[e.code];
+  if (!action) return;
+  e.preventDefault();
+  input[action] = true;
+});
+window.addEventListener('keyup', (e) => {
+  const action = KEY_MAP[e.code];
+  if (!action) return;
+  e.preventDefault();
+  input[action] = false;
+});
+
+document.querySelectorAll('.ctrl').forEach((btn) => {
+  const action = btn.dataset.action;
+  const press = (e) => {
+    e.preventDefault();
+    input[action] = true;
+    btn.classList.add('is-pressed');
+    btn.setPointerCapture?.(e.pointerId);
+  };
+  const release = () => {
+    input[action] = false;
+    btn.classList.remove('is-pressed');
+  };
+  btn.addEventListener('pointerdown', press);
+  btn.addEventListener('pointerup', release);
+  btn.addEventListener('pointercancel', release);
+  btn.addEventListener('pointerleave', release);
+});
+
+const _upWorld = new THREE.Vector3();
+const _fwdWorld = new THREE.Vector3();
+const _starWorld = new THREE.Vector3();
+const _camDesired = new THREE.Vector3();
+const _lookTarget = new THREE.Vector3();
+
+const CAM_HEIGHT = 0.55;
+const CAM_BACK = 1.05;
+const CAM_LOOK_RAISE = 0.18;
+
+function updateCamera() {
+  planet.updateMatrixWorld();
+  starTheFox.getWorldPosition(_starWorld);
+
+  _upWorld.copy(star.position).normalize().transformDirection(planet.matrixWorld).normalize();
+  _fwdWorld.copy(star.forward).transformDirection(planet.matrixWorld).normalize();
+
+  _camDesired.copy(_starWorld)
+    .addScaledVector(_upWorld, CAM_HEIGHT)
+    .addScaledVector(_fwdWorld, -CAM_BACK);
+
+  camera.position.copy(_camDesired);
+  camera.up.copy(_upWorld);
+
+  _lookTarget.copy(_starWorld).addScaledVector(_upWorld, CAM_LOOK_RAISE);
+  camera.lookAt(_lookTarget);
+}
+updateCamera();
 
 function onResize() {
   const width = window.innerWidth;
@@ -223,10 +342,41 @@ function onResize() {
 window.addEventListener('resize', onResize);
 onResize();
 
+const _up = new THREE.Vector3();
+const _moveAxis = new THREE.Vector3();
 const clock = new THREE.Clock();
+
 function animate() {
-  const delta = clock.getDelta();
-  planet.rotation.y += delta * 0.2;
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  const turn = (input.left ? 1 : 0) - (input.right ? 1 : 0);
+  const move = (input.fwd ? 1 : 0) - (input.back ? 1 : 0);
+
+  _up.copy(star.position).normalize();
+
+  if (turn !== 0) {
+    star.forward.applyAxisAngle(_up, turn * star.turnSpeed * dt);
+  }
+  star.forward.projectOnPlane(_up).normalize();
+
+  if (move !== 0) {
+    _moveAxis.crossVectors(star.forward, _up).normalize();
+    const angle = move * star.walkSpeed * dt;
+    star.position.applyAxisAngle(_moveAxis, angle).setLength(SURFACE_RADIUS);
+    star.forward.applyAxisAngle(_moveAxis, angle);
+  }
+
+  let bob = 0;
+  if (move !== 0) {
+    star.walkPhase += dt * 9;
+    bob = Math.sin(star.walkPhase) * 0.012;
+  } else {
+    star.walkPhase = 0;
+  }
+
+  applyStarTransform(bob);
+  updateCamera();
+
   renderer.render(scene, camera);
   requestAnimationFrame(animate);
 }

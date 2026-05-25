@@ -41,3 +41,72 @@ html, body {
     letter-spacing: 0.15em;
   }
 }
+
+.controls {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  display: grid;
+  grid-template-columns: repeat(3, 58px);
+  grid-template-rows: repeat(3, 58px);
+  gap: 6px;
+  z-index: 10;
+  touch-action: none;
+  user-select: none;
+}
+
+.ctrl {
+  background: rgba(255, 255, 255, 0.10);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  color: rgba(255, 255, 255, 0.88);
+  border-radius: 50%;
+  font-size: 1.25rem;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 120ms ease, transform 120ms ease;
+  padding: 0;
+}
+
+.ctrl:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.ctrl:active,
+.ctrl.is-pressed {
+  background: rgba(255, 255, 255, 0.32);
+  transform: scale(0.94);
+}
+
+.ctrl-up    { grid-column: 2; grid-row: 1; }
+.ctrl-left  { grid-column: 1; grid-row: 2; }
+.ctrl-right { grid-column: 3; grid-row: 2; }
+.ctrl-down  { grid-column: 2; grid-row: 3; }
+
+.hint {
+  position: fixed;
+  bottom: 1.25rem;
+  left: 1.5rem;
+  margin: 0;
+  font-size: 0.78rem;
+  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.45);
+  pointer-events: none;
+  user-select: none;
+  z-index: 10;
+}
+
+@media (max-width: 480px) {
+  .controls {
+    bottom: 1rem;
+    right: 1rem;
+    grid-template-columns: repeat(3, 64px);
+    grid-template-rows: repeat(3, 64px);
+  }
+  .hint {
+    display: none;
+  }
+}
