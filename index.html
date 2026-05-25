@@ -16,14 +16,59 @@
 </head>
 <body>
   <h1 class="title">Creator Galaxy</h1>
+
+  <button class="edit-toggle" type="button" aria-label="Open landmark builder">
+    <span class="edit-toggle-icon" aria-hidden="true">
+      <span></span><span></span><span></span>
+    </span>
+    <span class="edit-toggle-label">Build</span>
+  </button>
+
   <canvas id="game-canvas"></canvas>
+
+  <aside class="sidebar" aria-label="Landmark builder">
+    <h2 class="sidebar-title">Landmarks</h2>
+    <p class="sidebar-help">Pick something, then click on the planet to drop it. Click a placed item to edit it.</p>
+    <ul class="sidebar-list">
+      <li class="sidebar-item" data-tool="tree" tabindex="0">
+        <span class="sidebar-icon icon-tree" aria-hidden="true"></span>
+        <span class="sidebar-name">Tree</span>
+      </li>
+      <li class="sidebar-item" data-tool="rock" tabindex="0">
+        <span class="sidebar-icon icon-rock" aria-hidden="true"></span>
+        <span class="sidebar-name">Rock</span>
+      </li>
+      <li class="sidebar-item" data-tool="bush" tabindex="0">
+        <span class="sidebar-icon icon-bush" aria-hidden="true"></span>
+        <span class="sidebar-name">Bush</span>
+      </li>
+      <li class="sidebar-item" data-tool="mushroom" tabindex="0">
+        <span class="sidebar-icon icon-mushroom" aria-hidden="true"></span>
+        <span class="sidebar-name">Mushroom</span>
+      </li>
+    </ul>
+    <p class="sidebar-coming">Coming soon: ponds &amp; water</p>
+  </aside>
+
+  <div class="placement-banner" role="status"></div>
+
+  <div class="action-panel" role="toolbar" aria-label="Selected landmark actions">
+    <span class="item-name">Item</span>
+    <button type="button" data-action="smaller" aria-label="Make smaller">&minus;</button>
+    <button type="button" data-action="bigger" aria-label="Make bigger">+</button>
+    <button type="button" data-action="duplicate" aria-label="Duplicate">Duplicate</button>
+    <button type="button" data-action="delete" aria-label="Delete">Delete</button>
+  </div>
+
   <div class="controls" aria-label="Star the Fox movement controls">
     <button class="ctrl ctrl-up"    data-action="fwd"   aria-label="Walk forward">&#9650;</button>
     <button class="ctrl ctrl-left"  data-action="left"  aria-label="Turn left">&#9664;</button>
     <button class="ctrl ctrl-right" data-action="right" aria-label="Turn right">&#9654;</button>
     <button class="ctrl ctrl-down"  data-action="back"  aria-label="Walk backward">&#9660;</button>
   </div>
-  <p class="hint">WASD / Arrows to walk &middot; Click to look around &middot; Esc to release</p>
+
+  <p class="hint">WASD / Arrows to walk &middot; Click to look around &middot; Build to open the landmark menu</p>
+
   <script type="module" src="js/main.js"></script>
 </body>
 </html>

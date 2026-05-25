@@ -11,15 +11,10 @@ const SURFACE_MAX_R = PLANET_RADIUS + PLANET_AMPLITUDE + SURFACE_OFFSET;
 const PLANET_DETAIL = 6;
 const PLANET_TILT = 0.35;
 
-const TREE_TARGET_COUNT = 1800;
-const TREE_VIEW_DIST = 60;
-const TREE_VIEW_DIST_SQ = TREE_VIEW_DIST * TREE_VIEW_DIST;
-const TREE_SCALE_MIN = 5.0;
-const TREE_SCALE_MAX = 8.0;
+const WORLD_VIEW_DIST = 60;
 const TREE_TRUNK_GEOM_RADIUS = 0.018;
 
 const STAR_COLLISION_RADIUS = 0.18;
-const TREE_COLLISION_BUFFER = 1.4;
 
 const CAM_FOV = 65;
 const CAM_NEAR = 0.1;
@@ -49,7 +44,7 @@ const canvas = document.getElementById('game-canvas');
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x05060a);
-scene.fog = new THREE.Fog(0x05060a, TREE_VIEW_DIST * 0.7, TREE_VIEW_DIST * 1.25);
+scene.fog = new THREE.Fog(0x05060a, WORLD_VIEW_DIST * 1.5, WORLD_VIEW_DIST * 3.2);
 
 const camera = new THREE.PerspectiveCamera(
   CAM_FOV,
@@ -99,6 +94,40 @@ function clumpNoise(x, y, z) {
 function surfaceHeightAt(direction) {
   const h = noise3D(direction.x * 2.4, direction.y * 2.4, direction.z * 2.4);
   return PLANET_RADIUS + h * PLANET_AMPLITUDE + SURFACE_OFFSET;
+}
+
+const _tnRef = new THREE.Vector3();
+const _tnTan1 = new THREE.Vector3();
+const _tnTan2 = new THREE.Vector3();
+const _tnD1 = new THREE.Vector3();
+const _tnD2 = new THREE.Vector3();
+const _tnP0 = new THREE.Vector3();
+const _tnP1 = new THREE.Vector3();
+const _tnP2 = new THREE.Vector3();
+const _tnE1 = new THREE.Vector3();
+const _tnE2 = new THREE.Vector3();
+
+// Approximate terrain normal at a given direction by sampling three nearby
+// points on the displaced surface and crossing the resulting edges.
+function computeTerrainNormal(dir, out) {
+  const eps = 0.02;
+  _tnRef.set(0, 1, 0);
+  if (Math.abs(dir.y) > 0.9) _tnRef.set(1, 0, 0);
+  _tnTan1.crossVectors(dir, _tnRef).normalize();
+  _tnTan2.crossVectors(dir, _tnTan1).normalize();
+
+  _tnP0.copy(dir).multiplyScalar(surfaceHeightAt(dir));
+
+  _tnD1.copy(dir).addScaledVector(_tnTan1, eps).normalize();
+  _tnD2.copy(dir).addScaledVector(_tnTan2, eps).normalize();
+  _tnP1.copy(_tnD1).multiplyScalar(surfaceHeightAt(_tnD1));
+  _tnP2.copy(_tnD2).multiplyScalar(surfaceHeightAt(_tnD2));
+
+  _tnE1.subVectors(_tnP1, _tnP0);
+  _tnE2.subVectors(_tnP2, _tnP0);
+  out.crossVectors(_tnE1, _tnE2).normalize();
+  if (out.dot(dir) < 0) out.negate();
+  return out;
 }
 
 // =============================================================================
@@ -346,19 +375,22 @@ const star = {
 
 const _right = new THREE.Vector3();
 const _basis = new THREE.Matrix4();
+const _stUp = new THREE.Vector3();
+const _stTerrainUp = new THREE.Vector3();
 
 function applyStarTransform() {
-  const up = star.position.clone().normalize();
-  star.forward.projectOnPlane(up).normalize();
-  _right.crossVectors(up, star.forward).normalize();
-  _basis.makeBasis(_right, up, star.forward);
+  _stUp.copy(star.position).normalize();
+  computeTerrainNormal(_stUp, _stTerrainUp);
+  star.forward.projectOnPlane(_stTerrainUp).normalize();
+  _right.crossVectors(_stTerrainUp, star.forward).normalize();
+  _basis.makeBasis(_right, _stTerrainUp, star.forward);
   starTheFox.quaternion.setFromRotationMatrix(_basis);
   starTheFox.position.copy(star.position);
 }
 applyStarTransform();
 
 // =============================================================================
-// Trees — clumped scatter, view-distance culling, collision-ready
+// Editor item factories — shared geometry/materials, individual Object3Ds
 // =============================================================================
 
 const trunkGeo = new THREE.CylinderGeometry(TREE_TRUNK_GEOM_RADIUS, 0.024, 0.08, 5);
@@ -375,105 +407,182 @@ const canopyMat = new THREE.MeshStandardMaterial({
   color: 0x37642e, flatShading: true, roughness: 0.9,
 });
 
-function buildTreeSystem(targetCount) {
-  const treeData = [];
+const rockMat = new THREE.MeshStandardMaterial({
+  color: 0x807a72, flatShading: true, roughness: 0.95,
+});
+const bushMat = new THREE.MeshStandardMaterial({
+  color: 0x4a8035, flatShading: true, roughness: 0.85,
+});
+const mushroomCapMat = new THREE.MeshStandardMaterial({
+  color: 0xc0392b, flatShading: true, roughness: 0.7,
+});
+const mushroomSpotMat = new THREE.MeshStandardMaterial({
+  color: 0xfaf2e6, flatShading: true, roughness: 0.7,
+});
+const mushroomStemMat = new THREE.MeshStandardMaterial({
+  color: 0xf2e3c4, flatShading: true, roughness: 0.8,
+});
 
-  const dir = new THREE.Vector3();
-  const up = new THREE.Vector3();
-  const fwd = new THREE.Vector3();
-  const right = new THREE.Vector3();
-  const ref = new THREE.Vector3();
-  const pos = new THREE.Vector3();
-
-  const MAX_ATTEMPTS = targetCount * 12;
-  for (let attempt = 0; attempt < MAX_ATTEMPTS && treeData.length < targetCount; attempt++) {
-    const u = Math.random() * 2 - 1;
-    const theta = Math.random() * Math.PI * 2;
-    const sinPhi = Math.sqrt(Math.max(0, 1 - u * u));
-    dir.set(sinPhi * Math.cos(theta), u, sinPhi * Math.sin(theta));
-
-    // Keep a clearing at the spawn pole
-    if (dir.y > 0.985) continue;
-
-    const h = noise3D(dir.x * 2.4, dir.y * 2.4, dir.z * 2.4);
-    if (h < -0.05 || h > 0.28) continue;
-
-    // Clumping noise — only place trees where the clump field is positive
-    const clump = clumpNoise(dir.x * 1.6, dir.y * 1.6, dir.z * 1.6);
-    if (clump < 0.05) continue;
-
-    const r = PLANET_RADIUS + h * PLANET_AMPLITUDE;
-    pos.copy(dir).multiplyScalar(r);
-
-    up.copy(dir);
-    ref.set(0, 1, 0);
-    if (Math.abs(up.y) > 0.95) ref.set(1, 0, 0);
-    fwd.crossVectors(up, ref).normalize().applyAxisAngle(up, Math.random() * Math.PI * 2);
-    right.crossVectors(up, fwd).normalize();
-
-    const scale = TREE_SCALE_MIN + Math.random() * (TREE_SCALE_MAX - TREE_SCALE_MIN);
-
-    const matrix = new THREE.Matrix4();
-    matrix.makeBasis(right, up, fwd);
-    matrix.setPosition(pos);
-    const scaleMat = new THREE.Matrix4().makeScale(scale, scale, scale);
-    matrix.multiply(scaleMat);
-
-    treeData.push({
-      pos: pos.clone(),
-      scale,
-      matrix,
-      collisionR: TREE_TRUNK_GEOM_RADIUS * scale * TREE_COLLISION_BUFFER,
-    });
+function jitterIco(geo, amount = 0.25) {
+  const pos = geo.attributes.position;
+  const v = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i);
+    v.multiplyScalar(1 - amount * 0.5 + Math.random() * amount);
+    pos.setXYZ(i, v.x, v.y, v.z);
   }
-
-  const capacity = treeData.length;
-  const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, capacity);
-  const canopyLower = new THREE.InstancedMesh(canopyLowerGeo, canopyMat, capacity);
-  const canopyUpper = new THREE.InstancedMesh(canopyUpperGeo, canopyMat, capacity);
-  trunks.frustumCulled = false;
-  canopyLower.frustumCulled = false;
-  canopyUpper.frustumCulled = false;
-
-  const group = new THREE.Group();
-  group.add(trunks, canopyLower, canopyUpper);
-  return { group, trunks, canopyLower, canopyUpper, treeData };
+  geo.computeVertexNormals();
+  return geo;
 }
 
-const treeSystem = buildTreeSystem(TREE_TARGET_COUNT);
-planet.add(treeSystem.group);
+function createTreeItem() {
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(trunkGeo, trunkMat));
+  g.add(new THREE.Mesh(canopyLowerGeo, canopyMat));
+  g.add(new THREE.Mesh(canopyUpperGeo, canopyMat));
+  return g;
+}
 
-function updateTreeCulling() {
-  const sp = star.position;
-  let visible = 0;
-  for (const t of treeSystem.treeData) {
-    const dx = t.pos.x - sp.x;
-    const dy = t.pos.y - sp.y;
-    const dz = t.pos.z - sp.z;
-    if (dx * dx + dy * dy + dz * dz < TREE_VIEW_DIST_SQ) {
-      treeSystem.trunks.setMatrixAt(visible, t.matrix);
-      treeSystem.canopyLower.setMatrixAt(visible, t.matrix);
-      treeSystem.canopyUpper.setMatrixAt(visible, t.matrix);
-      visible++;
+function createRockItem() {
+  const geo = jitterIco(new THREE.IcosahedronGeometry(0.07, 0).toNonIndexed(), 0.45);
+  // Sit half-buried by translating up only slightly
+  geo.translate(0, 0.04, 0);
+  const rock = new THREE.Mesh(geo, rockMat);
+  rock.rotation.y = Math.random() * Math.PI * 2;
+  return rock;
+}
+
+function createBushItem() {
+  const g = new THREE.Group();
+  const main = new THREE.Mesh(
+    jitterIco(new THREE.IcosahedronGeometry(0.07, 1).toNonIndexed(), 0.3),
+    bushMat
+  );
+  main.position.y = 0.06;
+  g.add(main);
+  // A small secondary lump
+  const lump = new THREE.Mesh(
+    jitterIco(new THREE.IcosahedronGeometry(0.045, 1).toNonIndexed(), 0.3),
+    bushMat
+  );
+  lump.position.set(0.05, 0.04, 0.02);
+  g.add(lump);
+  return g;
+}
+
+function createMushroomItem() {
+  const g = new THREE.Group();
+  const stemGeo = new THREE.CylinderGeometry(0.018, 0.022, 0.06, 6);
+  stemGeo.translate(0, 0.03, 0);
+  g.add(new THREE.Mesh(stemGeo, mushroomStemMat));
+
+  const capGeo = new THREE.SphereGeometry(0.05, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+  const cap = new THREE.Mesh(capGeo, mushroomCapMat);
+  cap.position.y = 0.06;
+  g.add(cap);
+
+  // Three white spots on the cap
+  for (let i = 0; i < 3; i++) {
+    const spot = new THREE.Mesh(new THREE.SphereGeometry(0.012, 6, 5), mushroomSpotMat);
+    const a = (i / 3) * Math.PI * 2 + 0.7;
+    spot.position.set(Math.cos(a) * 0.028, 0.087, Math.sin(a) * 0.028);
+    g.add(spot);
+  }
+  return g;
+}
+
+const ITEM_TYPES = {
+  tree:     { label: 'Tree',     build: createTreeItem,     defaultScale: 6,   collisionR: 0.15 },
+  rock:     { label: 'Rock',     build: createRockItem,     defaultScale: 4,   collisionR: 0.18 },
+  bush:     { label: 'Bush',     build: createBushItem,     defaultScale: 3,   collisionR: 0.14 },
+  mushroom: { label: 'Mushroom', build: createMushroomItem, defaultScale: 2.5, collisionR: 0.06 },
+};
+
+// =============================================================================
+// Placed items registry — anything the editor drops into the world
+// =============================================================================
+
+const placedItems = []; // { type, root, scale, dir, pos }
+const itemsGroup = new THREE.Group();
+planet.add(itemsGroup);
+
+function orientItemOnSurface(root, dir) {
+  const surfaceR = surfaceHeightAt(dir);
+  const pos = dir.clone().multiplyScalar(surfaceR);
+
+  const terrainUp = new THREE.Vector3();
+  computeTerrainNormal(dir, terrainUp);
+
+  const ref = Math.abs(terrainUp.y) > 0.95 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+  const fwd = new THREE.Vector3().crossVectors(terrainUp, ref).normalize();
+  fwd.applyAxisAngle(terrainUp, Math.random() * Math.PI * 2);
+  const right = new THREE.Vector3().crossVectors(terrainUp, fwd).normalize();
+
+  const basis = new THREE.Matrix4().makeBasis(right, terrainUp, fwd);
+  root.quaternion.setFromRotationMatrix(basis);
+  root.position.copy(pos);
+  return pos;
+}
+
+function addItem(type, dir) {
+  const def = ITEM_TYPES[type];
+  if (!def) return null;
+  const root = def.build();
+  const scale = def.defaultScale;
+  root.scale.setScalar(scale);
+  root.userData.itemType = type;
+  root.userData.isPlacedItem = true;
+  const pos = orientItemOnSurface(root, dir);
+  itemsGroup.add(root);
+
+  const item = { type, root, scale, dir: dir.clone(), pos: pos.clone() };
+  root.userData.item = item;
+  placedItems.push(item);
+  return item;
+}
+
+function removeItem(item) {
+  const idx = placedItems.indexOf(item);
+  if (idx === -1) return;
+  placedItems.splice(idx, 1);
+  itemsGroup.remove(item.root);
+  item.root.traverse((obj) => {
+    if (obj.geometry && obj.geometry !== trunkGeo && obj.geometry !== canopyLowerGeo &&
+        obj.geometry !== canopyUpperGeo) {
+      obj.geometry.dispose?.();
     }
-  }
-  treeSystem.trunks.count = visible;
-  treeSystem.canopyLower.count = visible;
-  treeSystem.canopyUpper.count = visible;
-  treeSystem.trunks.instanceMatrix.needsUpdate = true;
-  treeSystem.canopyLower.instanceMatrix.needsUpdate = true;
-  treeSystem.canopyUpper.instanceMatrix.needsUpdate = true;
+  });
 }
-updateTreeCulling();
 
-function resolveTreeCollisions(targetPos) {
-  for (const t of treeSystem.treeData) {
-    const dx = targetPos.x - t.pos.x;
-    const dy = targetPos.y - t.pos.y;
-    const dz = targetPos.z - t.pos.z;
+function duplicateItem(item) {
+  // Offset the duplicate slightly along a random tangent
+  const dir = item.dir.clone();
+  const ref = Math.abs(dir.y) > 0.95 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+  const tan = new THREE.Vector3().crossVectors(dir, ref).normalize();
+  tan.applyAxisAngle(dir, Math.random() * Math.PI * 2);
+  const newDir = dir.addScaledVector(tan, 0.005).normalize();
+  const newItem = addItem(item.type, newDir);
+  if (newItem) {
+    newItem.scale = item.scale;
+    newItem.root.scale.setScalar(item.scale);
+  }
+  return newItem;
+}
+
+function resizeItem(item, factor) {
+  item.scale = Math.max(0.5, Math.min(20, item.scale * factor));
+  item.root.scale.setScalar(item.scale);
+}
+
+function resolveCollisions(targetPos) {
+  for (const item of placedItems) {
+    const dx = targetPos.x - item.pos.x;
+    const dy = targetPos.y - item.pos.y;
+    const dz = targetPos.z - item.pos.z;
     const distSq = dx * dx + dy * dy + dz * dz;
-    if (distSq > 9) continue; // way out of range
-    const totalR = STAR_COLLISION_RADIUS + t.collisionR;
+    if (distSq > 9) continue;
+    const def = ITEM_TYPES[item.type];
+    const totalR = STAR_COLLISION_RADIUS + def.collisionR * item.scale;
     if (distSq < totalR * totalR && distSq > 1e-6) {
       const dist = Math.sqrt(distSq);
       const push = (totalR - dist) / dist;
@@ -560,9 +669,6 @@ document.querySelectorAll('.ctrl').forEach((btn) => {
   btn.addEventListener('pointerleave', release);
 });
 
-canvas.addEventListener('click', () => {
-  if (!pointerLocked) canvas.requestPointerLock?.();
-});
 document.addEventListener('pointerlockchange', () => {
   pointerLocked = document.pointerLockElement === canvas;
   document.body.classList.toggle('is-locked', pointerLocked);
@@ -583,6 +689,170 @@ document.addEventListener('mousemove', (e) => {
   camPitch -= dy * MOUSE_SENS;
   if (camPitch < CAM_PITCH_MIN) camPitch = CAM_PITCH_MIN;
   if (camPitch > CAM_PITCH_MAX) camPitch = CAM_PITCH_MAX;
+});
+
+// =============================================================================
+// Editor mode — sidebar, placement, selection
+// =============================================================================
+
+let editMode = false;
+let activeTool = null;
+let selectedItem = null;
+let selectionHelper = null;
+
+const raycaster = new THREE.Raycaster();
+const _ndc = new THREE.Vector2();
+const _itemLocal = new THREE.Vector3();
+
+function setEditMode(on) {
+  editMode = on;
+  document.body.classList.toggle('edit-mode', on);
+  document.querySelector('.sidebar')?.classList.toggle('is-open', on);
+  document.querySelector('.edit-toggle')?.classList.toggle('is-active', on);
+  if (on && pointerLocked) document.exitPointerLock?.();
+  if (!on) {
+    setActiveTool(null);
+    setSelectedItem(null);
+  }
+}
+
+function setActiveTool(toolKey) {
+  activeTool = toolKey;
+  document.querySelectorAll('.sidebar-item').forEach((el) => {
+    el.classList.toggle('is-active', el.dataset.tool === toolKey);
+  });
+  document.body.classList.toggle('placing', !!toolKey);
+  const banner = document.querySelector('.placement-banner');
+  if (banner) {
+    if (toolKey) {
+      banner.textContent = `Click on the planet to place a ${ITEM_TYPES[toolKey].label.toLowerCase()}. Esc to cancel.`;
+      banner.classList.add('is-visible');
+    } else {
+      banner.classList.remove('is-visible');
+    }
+  }
+}
+
+function setSelectedItem(item) {
+  selectedItem = item;
+  if (selectionHelper) {
+    selectionHelper.parent?.remove(selectionHelper);
+    selectionHelper.geometry?.dispose();
+    selectionHelper = null;
+  }
+  const panel = document.querySelector('.action-panel');
+  if (item) {
+    selectionHelper = new THREE.BoxHelper(item.root, 0xfff04d);
+    selectionHelper.material.depthTest = false;
+    selectionHelper.material.transparent = true;
+    selectionHelper.material.opacity = 0.95;
+    item.root.parent.add(selectionHelper);
+    if (panel) {
+      panel.classList.add('is-visible');
+      panel.querySelector('.item-name').textContent = ITEM_TYPES[item.type].label;
+    }
+  } else if (panel) {
+    panel.classList.remove('is-visible');
+  }
+}
+
+function updateSelectionIndicator() {
+  if (selectionHelper && selectedItem) selectionHelper.update();
+}
+
+function getMouseNDC(e, out) {
+  const rect = canvas.getBoundingClientRect();
+  out.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  out.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+}
+
+function pickAtMouse(e) {
+  getMouseNDC(e, _ndc);
+  raycaster.setFromCamera(_ndc, camera);
+
+  const itemHits = raycaster.intersectObject(itemsGroup, true);
+  if (itemHits.length > 0) {
+    let n = itemHits[0].object;
+    while (n && !n.userData?.isPlacedItem) n = n.parent;
+    if (n) return { type: 'item', item: n.userData.item, hit: itemHits[0] };
+  }
+
+  const planetHits = raycaster.intersectObject(planet, false);
+  if (planetHits.length > 0) {
+    return { type: 'planet', hit: planetHits[0] };
+  }
+  return null;
+}
+
+function handleCanvasPointerDown(e) {
+  if (e.button !== 0) return;
+
+  if (editMode) {
+    const pick = pickAtMouse(e);
+    if (!pick) {
+      setSelectedItem(null);
+      return;
+    }
+    if (activeTool) {
+      if (pick.type === 'planet') {
+        _itemLocal.copy(pick.hit.point);
+        planet.worldToLocal(_itemLocal);
+        const dir = _itemLocal.clone().normalize();
+        addItem(activeTool, dir);
+      }
+    } else {
+      if (pick.type === 'item') setSelectedItem(pick.item);
+      else setSelectedItem(null);
+    }
+  } else {
+    if (!pointerLocked) canvas.requestPointerLock?.();
+  }
+}
+
+canvas.addEventListener('pointerdown', handleCanvasPointerDown);
+
+document.querySelector('.edit-toggle')?.addEventListener('click', () => {
+  setEditMode(!editMode);
+});
+
+document.querySelectorAll('.sidebar-item').forEach((el) => {
+  el.addEventListener('click', () => {
+    const tool = el.dataset.tool;
+    setActiveTool(activeTool === tool ? null : tool);
+    setSelectedItem(null);
+  });
+});
+
+document.querySelector('[data-action="bigger"]')?.addEventListener('click', () => {
+  if (selectedItem) {
+    resizeItem(selectedItem, 1.25);
+    if (selectionHelper) selectionHelper.update();
+  }
+});
+document.querySelector('[data-action="smaller"]')?.addEventListener('click', () => {
+  if (selectedItem) {
+    resizeItem(selectedItem, 1 / 1.25);
+    if (selectionHelper) selectionHelper.update();
+  }
+});
+document.querySelector('[data-action="duplicate"]')?.addEventListener('click', () => {
+  if (selectedItem) {
+    const newItem = duplicateItem(selectedItem);
+    if (newItem) setSelectedItem(newItem);
+  }
+});
+document.querySelector('[data-action="delete"]')?.addEventListener('click', () => {
+  if (selectedItem) {
+    removeItem(selectedItem);
+    setSelectedItem(null);
+  }
+});
+
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Escape') {
+    if (activeTool) setActiveTool(null);
+    else if (selectedItem) setSelectedItem(null);
+  }
 });
 
 // =============================================================================
@@ -664,7 +934,7 @@ function animate() {
     _intendedDir.copy(_intendedPos).normalize();
     _intendedPos.setLength(surfaceHeightAt(_intendedDir));
 
-    resolveTreeCollisions(_intendedPos);
+    resolveCollisions(_intendedPos);
     _intendedDir.copy(_intendedPos).normalize();
     _intendedPos.setLength(surfaceHeightAt(_intendedDir));
 
@@ -711,7 +981,7 @@ function animate() {
 
   applyStarTransform();
   updateCamera();
-  updateTreeCulling();
+  updateSelectionIndicator();
 
   renderer.render(scene, camera);
   requestAnimationFrame(animate);
