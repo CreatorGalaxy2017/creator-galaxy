@@ -496,6 +496,34 @@ body.is-locked .hint {
   box-shadow: -1px 5px 0 -2px #ddaa44;
 }
 
+/* ------- Toast (placement errors / hints) ------- */
+.toast {
+  position: fixed;
+  top: 5rem;
+  left: 50%;
+  transform: translate(-50%, -0.5rem);
+  background: rgba(40, 16, 16, 0.78);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #fff5e0;
+  border: 1px solid rgba(255, 130, 130, 0.65);
+  padding: 0.55rem 1rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  letter-spacing: 0.03em;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 32;
+  transition: opacity 200ms ease, transform 220ms ease;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  max-width: 90vw;
+  text-align: center;
+}
+.toast.is-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
 /* ------- Penguin speech bubble ------- */
 
 .speech-bubble {

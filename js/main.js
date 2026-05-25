@@ -6,7 +6,7 @@ import * as THREE from 'three';
 
 const PLANET_RADIUS = 80;
 const PLANET_AMPLITUDE = 13;
-const SURFACE_OFFSET = 0.05;
+const SURFACE_OFFSET = 0.02;
 const SURFACE_MAX_R = PLANET_RADIUS + PLANET_AMPLITUDE + SURFACE_OFFSET;
 const PLANET_DETAIL = 6;
 const PLANET_TILT = 0.35;
@@ -506,7 +506,7 @@ function createRockItem() {
   const mainGeo = makeBlobGeo(0.085, 1, 0.35);
   flattenBottom(mainGeo, -0.02, 0.25);
   const main = new THREE.Mesh(mainGeo, rockMats[Math.floor(Math.random() * 2)]);
-  main.position.y = 0.05;
+  main.position.y = 0.018; // bottom of the flattened blob sits at ~ground
   main.rotation.y = Math.random() * Math.PI * 2;
   g.add(main);
 
@@ -516,7 +516,7 @@ function createRockItem() {
     flattenBottom(sGeo, -0.01, 0.25);
     const s = new THREE.Mesh(sGeo, rockMats[2]);
     const a = Math.random() * Math.PI * 2;
-    s.position.set(Math.cos(a) * 0.075, 0.028, Math.sin(a) * 0.075);
+    s.position.set(Math.cos(a) * 0.075, 0.008, Math.sin(a) * 0.075);
     s.rotation.y = Math.random() * Math.PI * 2;
     g.add(s);
   }
@@ -528,10 +528,10 @@ function createBushItem() {
   const g = new THREE.Group();
 
   const lumps = [
-    { x:  0.00, y: 0.075, z:  0.00, r: 0.075, mat: bushMats[0] },
-    { x:  0.055, y: 0.05,  z:  0.02, r: 0.055, mat: bushMats[1] },
-    { x: -0.045, y: 0.055, z: -0.03, r: 0.052, mat: bushMats[2] },
-    { x:  0.015, y: 0.095, z: -0.035, r: 0.043, mat: bushMats[1] },
+    { x:  0.000, y: 0.038, z:  0.000, r: 0.075, mat: bushMats[0] },
+    { x:  0.055, y: 0.015, z:  0.020, r: 0.055, mat: bushMats[1] },
+    { x: -0.045, y: 0.020, z: -0.030, r: 0.052, mat: bushMats[2] },
+    { x:  0.015, y: 0.062, z: -0.035, r: 0.043, mat: bushMats[1] },
   ];
   for (const l of lumps) {
     const geo = makeBlobGeo(l.r, 1, 0.2);
@@ -1896,6 +1896,26 @@ function updatePenguinAI(item, dt) {
 // dive-bob animation.
 // -----------------------------------------------------------------------------
 
+const _aqProbe = new THREE.Vector3();
+
+function pickAquaticTarget(item) {
+  const ai = item.ai;
+  const water = item.waterItem;
+  for (let attempt = 0; attempt < 12; attempt++) {
+    _crRef.set(0, 1, 0);
+    if (Math.abs(ai.homeDir.y) > 0.95) _crRef.set(1, 0, 0);
+    _crTan.crossVectors(ai.homeDir, _crRef).normalize();
+    _crTan.applyAxisAngle(ai.homeDir, Math.random() * Math.PI * 2);
+    _crAxis.crossVectors(ai.homeDir, _crTan).normalize();
+    const arc = 0.035 * (0.3 + Math.random() * 0.7);
+    const candidate = ai.homeDir.clone().applyAxisAngle(_crAxis, arc).normalize();
+    if (!water) return candidate;
+    _aqProbe.copy(candidate).multiplyScalar(surfaceHeightAt(candidate));
+    if (pointInWater(water, _aqProbe)) return candidate;
+  }
+  return item.dir.clone(); // give up — stay put briefly
+}
+
 function updateAquaticAI(item, dt, t) {
   if (!item.ai) {
     item.ai = {
@@ -1905,19 +1925,15 @@ function updateAquaticAI(item, dt, t) {
       facingDir: null,
       walking: false,
       divePhase: Math.random() * Math.PI * 2,
+      breachIn: 6 + Math.random() * 12,
+      breachT: 0, // 0 = not breaching; counts down through the jump arc
     };
   }
   const ai = item.ai;
 
   ai.retargetIn -= dt;
   if (ai.retargetIn <= 0) {
-    _crRef.set(0, 1, 0);
-    if (Math.abs(ai.homeDir.y) > 0.95) _crRef.set(1, 0, 0);
-    _crTan.crossVectors(ai.homeDir, _crRef).normalize();
-    _crTan.applyAxisAngle(ai.homeDir, Math.random() * Math.PI * 2);
-    _crAxis.crossVectors(ai.homeDir, _crTan).normalize();
-    const arc = 0.035 * (0.4 + Math.random() * 0.6);
-    ai.targetDir.copy(ai.homeDir).applyAxisAngle(_crAxis, arc).normalize();
+    ai.targetDir.copy(pickAquaticTarget(item));
     ai.retargetIn = 4 + Math.random() * 5;
   }
 
@@ -1959,10 +1975,29 @@ function updateAquaticAI(item, dt, t) {
 
   // Dive bob — body group oscillates up/down and pitches forward/back
   ai.divePhase += dt * 0.9;
+
+  // Breach trigger: every 8-20s, launch a bigger jump arc that takes the
+  // creature clearly above the water surface before splashing back down.
+  ai.breachIn -= dt;
+  if (ai.breachIn <= 0 && ai.breachT <= 0) {
+    ai.breachT = 1.1;             // length of the jump in seconds
+    ai.breachIn = 8 + Math.random() * 14;
+  }
+  let breachOffset = 0;
+  let breachPitch = 0;
+  if (ai.breachT > 0) {
+    ai.breachT -= dt;
+    const u = Math.max(0, Math.min(1, 1 - ai.breachT / 1.1)); // 0->1 over arc
+    const arc = 4 * u * (1 - u);                              // parabola peak 1
+    breachOffset = arc * 0.55;                                // peak ~half a unit
+    // Pitch up on the way up, level near apex, down on the way down
+    breachPitch = -Math.cos(u * Math.PI) * 0.55;
+  }
+
   const parts = item.root.userData.parts;
   if (parts && parts.bodyGroup) {
-    parts.bodyGroup.position.y = Math.sin(ai.divePhase) * 0.16;
-    parts.bodyGroup.rotation.x = Math.cos(ai.divePhase) * 0.35;
+    parts.bodyGroup.position.y = Math.sin(ai.divePhase) * 0.16 + breachOffset;
+    parts.bodyGroup.rotation.x = Math.cos(ai.divePhase) * 0.35 + breachPitch;
   }
 }
 
@@ -2227,11 +2262,11 @@ function setActiveTool(toolKey) {
 const handleMat = new THREE.MeshStandardMaterial({
   color: 0xfff04d,
   emissive: 0xfff04d,
-  emissiveIntensity: 0.7,
+  emissiveIntensity: 0.85,
   roughness: 0.3,
   metalness: 0.15,
 });
-const handleGeo = new THREE.SphereGeometry(0.05, 12, 10);
+const handleGeo = new THREE.SphereGeometry(0.03, 10, 8);
 
 function showWaterHandles(item) {
   if (!item.edgePoints) return;
@@ -2313,6 +2348,30 @@ function getMouseNDC(e, out) {
   const rect = canvas.getBoundingClientRect();
   out.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
   out.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+}
+
+let _toastEl = null;
+let _toastTimer = null;
+function showToast(message) {
+  if (!_toastEl) {
+    _toastEl = document.createElement('div');
+    _toastEl.className = 'toast';
+    document.body.appendChild(_toastEl);
+  }
+  _toastEl.textContent = message;
+  _toastEl.classList.add('is-visible');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => {
+    _toastEl.classList.remove('is-visible');
+  }, 2600);
+}
+
+function findWaterContaining(planetLocalPoint) {
+  for (const item of placedItems) {
+    if (item.type !== 'water' || !item.edgePoints) continue;
+    if (pointInWater(item, planetLocalPoint)) return item;
+  }
+  return null;
 }
 
 function pickAtMouse(e) {
@@ -2425,6 +2484,12 @@ function handleCanvasPointerMove(e) {
 
   if (dragging.type === 'item') {
     const newDir = _itemLocal.clone().normalize();
+    const def = ITEM_TYPES[dragging.item.type];
+    if (def.behavior === 'aquatic') {
+      const waterItem = findWaterContaining(_itemLocal);
+      if (!waterItem) return; // ignore drags outside any pond
+      dragging.item.waterItem = waterItem;
+    }
     moveItem(dragging.item, newDir, true);
     if (selectionHelper) selectionHelper.update();
   } else if (dragging.type === 'handle') {
@@ -2464,7 +2529,18 @@ function handleCanvasPointerUp(e) {
           _itemLocal.copy(pick.hit.point);
           planet.worldToLocal(_itemLocal);
           const dir = _itemLocal.clone().normalize();
-          addItem(activeTool, dir);
+          const def = ITEM_TYPES[activeTool];
+          if (def.behavior === 'aquatic') {
+            const waterItem = findWaterContaining(_itemLocal);
+            if (!waterItem) {
+              showToast(`${def.label}s need water — add a pond first!`);
+            } else {
+              const newItem = addItem(activeTool, dir);
+              if (newItem) newItem.waterItem = waterItem;
+            }
+          } else {
+            addItem(activeTool, dir);
+          }
         }
       } else if (!pointerDownInfo.itemPicked) {
         // Clicked empty space (planet or background) with no tool — deselect
