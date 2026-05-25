@@ -562,34 +562,59 @@ function createMushroomItem() {
 const waterMat = new THREE.MeshStandardMaterial({
   color: 0x3a8bd6,
   transparent: true,
-  opacity: 0.7,
-  roughness: 0.2,
-  metalness: 0.2,
+  opacity: 0.78,
+  roughness: 0.12,
+  metalness: 0.45,
   flatShading: false,
   side: THREE.DoubleSide,
 });
 const waterEdgeMat = new THREE.MeshStandardMaterial({
   color: 0x6fb1e6,
   transparent: true,
-  opacity: 0.5,
+  opacity: 0.55,
   roughness: 0.3,
 });
 
 function createWaterItem() {
   const g = new THREE.Group();
-  // Slightly domed circle to feel like a pond surface
-  const geo = new THREE.CircleGeometry(0.22, 24);
+  // Use a higher-res circle so the wave animation has enough verts to look smooth
+  const geo = new THREE.CircleGeometry(0.22, 36);
   geo.rotateX(-Math.PI / 2);
   geo.translate(0, 0.005, 0);
   const disk = new THREE.Mesh(geo, waterMat);
   g.add(disk);
   // Subtle thicker rim disk for visual edge
-  const rimGeo = new THREE.RingGeometry(0.205, 0.235, 24);
+  const rimGeo = new THREE.RingGeometry(0.205, 0.235, 36);
   rimGeo.rotateX(-Math.PI / 2);
   rimGeo.translate(0, 0.008, 0);
   const rim = new THREE.Mesh(rimGeo, waterEdgeMat);
   g.add(rim);
+
+  // Cache the disk's original positions so animateWater can re-displace each frame
+  g.userData.waterDisk = disk;
+  g.userData.waterOrig = disk.geometry.attributes.position.array.slice();
   return g;
+}
+
+function animateWater(t) {
+  for (const item of placedItems) {
+    if (item.type !== 'water') continue;
+    const disk = item.root.userData.waterDisk;
+    const orig = item.root.userData.waterOrig;
+    if (!disk || !orig) continue;
+    const arr = disk.geometry.attributes.position.array;
+    for (let i = 0; i < arr.length; i += 3) {
+      const ox = orig[i];
+      const oz = orig[i + 2];
+      const wave =
+        Math.sin(ox * 6.5 + t * 1.4) * 0.005 +
+        Math.cos(oz * 8.2 + t * 1.05) * 0.004 +
+        Math.sin((ox + oz) * 3.1 + t * 0.65) * 0.003;
+      arr[i + 1] = orig[i + 1] + wave;
+    }
+    disk.geometry.attributes.position.needsUpdate = true;
+    disk.geometry.computeVertexNormals();
+  }
 }
 
 const penguinBodyMat = new THREE.MeshStandardMaterial({ color: 0x3a3d6e, flatShading: true, roughness: 0.6 });
@@ -758,6 +783,10 @@ function removeItem(item) {
   if (idx === -1) return;
   placedItems.splice(idx, 1);
   itemsGroup.remove(item.root);
+  if (item.bubble) {
+    item.bubble.remove();
+    item.bubble = null;
+  }
   item.root.traverse((obj) => {
     if (obj.geometry && obj.geometry !== trunkGeo && obj.geometry !== canopyLowerGeo &&
         obj.geometry !== canopyUpperGeo) {
@@ -869,8 +898,179 @@ function setItemFacing(item, facingDir) {
   item.yaw = Math.atan2(sin, cos);
 }
 
+// -----------------------------------------------------------------------------
+// Penguin audio (synthesized alien speech) + speech bubbles
+// -----------------------------------------------------------------------------
+
+let audioCtx = null;
+function ensureAudio() {
+  if (audioCtx) {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
+  }
+  const Ctor = window.AudioContext || window.webkitAudioContext;
+  if (!Ctor) return null;
+  try {
+    audioCtx = new Ctor();
+  } catch (e) {
+    audioCtx = null;
+  }
+  return audioCtx;
+}
+
+const PENGUIN_SOUND_PRESETS = {
+  greet:   { baseFreq: 380, syllables: 4, vary: 0.45, duration: 0.65, volume: 0.10 },
+  close:   { baseFreq: 540, syllables: 2, vary: 0.35, duration: 0.32, volume: 0.10 },
+  idle:    { baseFreq: 320, syllables: 3, vary: 0.55, duration: 0.55, volume: 0.08 },
+  arrived: { baseFreq: 430, syllables: 2, vary: 0.4,  duration: 0.42, volume: 0.09 },
+  placed:  { baseFreq: 270, syllables: 5, vary: 0.6,  duration: 0.95, volume: 0.11 },
+};
+
+function playPenguinTalk(type) {
+  const ctx = audioCtx;
+  if (!ctx) return;
+  const p = PENGUIN_SOUND_PRESETS[type] || PENGUIN_SOUND_PRESETS.idle;
+  const t = ctx.currentTime;
+  const syllableDur = p.duration / p.syllables;
+
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = 1600;
+  filter.Q.value = 1.2;
+  filter.connect(ctx.destination);
+
+  for (let i = 0; i < p.syllables; i++) {
+    const start = t + i * syllableDur;
+    const freq = p.baseFreq * (1 + (Math.random() - 0.5) * p.vary);
+    const sub = syllableDur * (0.65 + Math.random() * 0.25);
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = Math.random() < 0.55 ? 'square' : 'triangle';
+
+    osc.frequency.setValueAtTime(freq, start);
+    osc.frequency.linearRampToValueAtTime(freq * (1 + (Math.random() - 0.5) * 0.4), start + sub * 0.5);
+    osc.frequency.linearRampToValueAtTime(freq * (0.85 + Math.random() * 0.2), start + sub);
+
+    gain.gain.setValueAtTime(0, start);
+    gain.gain.linearRampToValueAtTime(p.volume, start + sub * 0.08);
+    gain.gain.linearRampToValueAtTime(p.volume * 0.9, start + sub * 0.75);
+    gain.gain.linearRampToValueAtTime(0, start + sub);
+
+    osc.connect(gain);
+    gain.connect(filter);
+    osc.start(start);
+    osc.stop(start + sub + 0.02);
+  }
+}
+
+const PENGUIN_PHRASES = {
+  greet: [
+    'Greetings, fox-being!',
+    'Glorbnax! A friend!',
+    'Beep boop — hello!',
+    'Salutations, traveler!',
+    'Ooh, a fluffy creature!',
+    'Take me to your leader!',
+    'Friend or moon-snack?',
+    'Two legs! Marvellous!',
+  ],
+  close: [
+    '*waddle waddle*',
+    'Personal space, please!',
+    'Your whiskers tickle!',
+    '*sniffs curiously*',
+    'Such a soft tail!',
+    'Are you... real?',
+  ],
+  idle: [
+    '*hums an alien tune*',
+    'Lovely planet you have here.',
+    'Three moons rising tonight.',
+    'I miss the home nebula.',
+    '*scratches antenna*',
+    'Is this... grass? Wonderful.',
+    'My helmet feels itchy.',
+    'Beep.',
+    'Squawk!',
+    'Where did I park my ship?',
+  ],
+  arrived: [
+    'What a view!',
+    'This spot will do.',
+    '*surveys the area*',
+    'Hmm, cozy.',
+    'I claim this rock.',
+  ],
+  placed: [
+    'Whoa! Where am I?',
+    'How did I get here?',
+    'Hello, new world!',
+    'Cool, a planet!',
+    'Did someone summon me?',
+  ],
+};
+
+function showSpeechBubble(item, text, holdSeconds = 3.2) {
+  if (!item.bubble) {
+    item.bubble = document.createElement('div');
+    item.bubble.className = 'speech-bubble';
+    document.body.appendChild(item.bubble);
+  }
+  item.bubble.textContent = text;
+  item.bubble.classList.add('is-visible');
+  item.bubbleHideAt = clock.elapsedTime + holdSeconds + Math.min(2, text.length * 0.04);
+}
+
+function tryPenguinSpeak(item, type) {
+  const ai = item.ai;
+  if (!ai) return;
+  const now = clock.elapsedTime;
+  if (ai.lastSpokeAt && now - ai.lastSpokeAt < 2.4) return;
+  const pool = PENGUIN_PHRASES[type];
+  if (!pool || pool.length === 0) return;
+
+  let phrase;
+  let tries = 0;
+  do {
+    phrase = pool[Math.floor(Math.random() * pool.length)];
+    tries++;
+  } while (phrase === ai.lastPhrase && pool.length > 1 && tries < 5);
+  ai.lastPhrase = phrase;
+  ai.lastSpokeAt = now;
+
+  showSpeechBubble(item, phrase);
+  playPenguinTalk(type);
+}
+
+const _bubbleWorld = new THREE.Vector3();
+function updateSpeechBubbles() {
+  const now = clock.elapsedTime;
+  for (const item of placedItems) {
+    if (item.type !== 'penguin' || !item.bubble) continue;
+    if (item.bubbleHideAt && now > item.bubbleHideAt) {
+      item.bubble.classList.remove('is-visible');
+    }
+    _bubbleWorld.set(0, 0.5, 0);
+    item.root.localToWorld(_bubbleWorld);
+    _bubbleWorld.project(camera);
+    if (_bubbleWorld.z > 1 || Math.abs(_bubbleWorld.x) > 1.4 || Math.abs(_bubbleWorld.y) > 1.4) {
+      item.bubble.style.display = 'none';
+    } else {
+      item.bubble.style.display = '';
+      const x = (_bubbleWorld.x + 1) * 0.5 * window.innerWidth;
+      const y = (1 - _bubbleWorld.y) * 0.5 * window.innerHeight;
+      item.bubble.style.left = `${x}px`;
+      item.bubble.style.top = `${y}px`;
+    }
+  }
+}
+
+// -----------------------------------------------------------------------------
+
 const PENGUIN_WALK_SPEED = 0.005;
 const PENGUIN_TURN_SPEED = 3.0;
+const PENGUIN_VERY_CLOSE_DIST = 1.6;
 const PENGUIN_WANDER_ARC = 0.025;
 const PENGUIN_NOTICE_DIST = 4.0;
 
@@ -888,13 +1088,45 @@ function updateCreatures(dt) {
         walkAnim: 0,
         idle: true,
         walking: false,
+        justSpawned: true,
+        spawnSpeakAt: clock.elapsedTime + 0.6,
+        starNoticed: false,
+        starVeryClose: false,
+        idleSpeakIn: 6 + Math.random() * 8,
+        lastTargetAi: null,
       };
     }
     const ai = item.ai;
+    const now = clock.elapsedTime;
+
+    // First-words after spawn
+    if (ai.justSpawned && now >= ai.spawnSpeakAt) {
+      ai.justSpawned = false;
+      tryPenguinSpeak(item, 'placed');
+    }
 
     _crUpL.copy(item.dir);
     _crToStar.subVectors(star.position, item.pos);
     const distToStar = _crToStar.length();
+
+    // Greet / close / left triggers
+    if (distToStar < PENGUIN_NOTICE_DIST) {
+      if (!ai.starNoticed) {
+        ai.starNoticed = true;
+        tryPenguinSpeak(item, 'greet');
+      }
+    } else if (distToStar > PENGUIN_NOTICE_DIST + 1.8) {
+      ai.starNoticed = false;
+    }
+
+    if (distToStar < PENGUIN_VERY_CLOSE_DIST) {
+      if (!ai.starVeryClose) {
+        ai.starVeryClose = true;
+        tryPenguinSpeak(item, 'close');
+      }
+    } else if (distToStar > PENGUIN_VERY_CLOSE_DIST + 0.6) {
+      ai.starVeryClose = false;
+    }
 
     let desiredFacing = null;
     ai.walking = false;
@@ -938,7 +1170,15 @@ function updateCreatures(dt) {
         } else {
           ai.idle = true;
           ai.retargetIn = 1.5 + Math.random() * 2.5;
+          if (Math.random() < 0.45) tryPenguinSpeak(item, 'arrived');
         }
+      }
+
+      // Random idle chit-chat when Star is far away
+      ai.idleSpeakIn -= dt;
+      if (ai.idleSpeakIn <= 0) {
+        ai.idleSpeakIn = 9 + Math.random() * 12;
+        tryPenguinSpeak(item, 'idle');
       }
     }
 
@@ -1192,6 +1432,8 @@ const DRAG_THRESHOLD_SQ = 16; // ~4px movement before it's a drag
 function handleCanvasPointerDown(e) {
   if (e.button !== undefined && e.button !== 0) return;
 
+  ensureAudio();
+
   pointerDownInfo = {
     x: e.clientX,
     y: e.clientY,
@@ -1437,9 +1679,11 @@ function animate() {
   }
 
   updateCreatures(dt);
+  animateWater(t);
 
   applyStarTransform();
   updateCamera();
+  updateSpeechBubbles();
   updateSelectionIndicator();
 
   renderer.render(scene, camera);

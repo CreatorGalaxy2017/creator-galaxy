@@ -330,6 +330,50 @@ body.is-locked .hint {
     5px -6px 0 -1px #ff66cc;
 }
 
+/* ------- Penguin speech bubble ------- */
+
+.speech-bubble {
+  position: fixed;
+  left: 0;
+  top: 0;
+  background: rgba(255, 255, 255, 0.94);
+  color: #14172a;
+  padding: 0.4rem 0.75rem;
+  border-radius: 14px;
+  font-size: 0.82rem;
+  font-family: inherit;
+  font-weight: 500;
+  line-height: 1.2;
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% - 14px));
+  opacity: 0;
+  transition: opacity 200ms ease, transform 250ms cubic-bezier(0.2, 0.7, 0.3, 1.2);
+  z-index: 26;
+  max-width: 240px;
+  text-align: center;
+  white-space: normal;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 102, 204, 0.6);
+}
+
+.speech-bubble.is-visible {
+  opacity: 1;
+  transform: translate(-50%, calc(-100% - 18px));
+}
+
+.speech-bubble::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border: 7px solid transparent;
+  border-top-color: rgba(255, 255, 255, 0.94);
+  margin-top: -1px;
+}
+
 .sidebar-coming {
   margin: 1rem 0 0;
   font-size: 0.68rem;
