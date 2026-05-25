@@ -330,6 +330,171 @@ body.is-locked .hint {
     5px -6px 0 -1px #ff66cc;
 }
 
+/* ----- Shark ----- */
+.icon-shark::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 55%;
+  transform: translate(-50%, -50%);
+  width: 36px;
+  height: 12px;
+  border-radius: 10px 14px 4px 4px / 8px 12px 4px 4px;
+  background: linear-gradient(180deg, #3f4f78 0%, #2f3d5e 60%, #c8d4dc 60%, #c8d4dc 100%);
+  box-shadow: 11px -3px 0 -3px #ff3030; /* red eye */
+}
+.icon-shark::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 55%;
+  transform: translate(-50%, -50%);
+  margin-top: -10px;
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 9px solid #2f3d5e; /* dorsal fin */
+}
+
+/* ----- Dolphin ----- */
+.icon-dolphin::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 55%;
+  transform: translate(-50%, -50%);
+  width: 32px;
+  height: 12px;
+  border-radius: 16px 20px 6px 6px / 12px 14px 6px 6px;
+  background: linear-gradient(180deg, #86a8e6 0%, #6a8bd6 60%, #eaf2fa 60%, #eaf2fa 100%);
+  box-shadow:
+    inset -2px 0 0 0 rgba(255, 102, 204, 0.45),
+    8px -1px 0 -3px #ff66cc;
+}
+.icon-dolphin::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 55%;
+  transform: translate(-50%, -50%);
+  margin-top: -9px;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-bottom: 7px solid #c0a8e8;
+}
+
+/* ----- Dragon ----- */
+.icon-dragon {
+  background: radial-gradient(ellipse at center, #4a3a6e 0 12px, transparent 13px);
+}
+.icon-dragon::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 36px;
+  height: 4px;
+  background:
+    linear-gradient(90deg,
+      transparent 0%,
+      rgba(106, 74, 138, 0.85) 12%,
+      rgba(106, 74, 138, 0.85) 88%,
+      transparent 100%);
+  border-radius: 4px;
+  clip-path: polygon(0 50%, 25% 0, 50% 50%, 75% 0, 100% 50%, 75% 100%, 50% 50%, 25% 100%);
+}
+.icon-dragon::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  margin-top: -2px;
+  transform: translate(-50%, -50%);
+  width: 4px;
+  height: 4px;
+  background: #ffaa00;
+  border-radius: 50%;
+  box-shadow: 5px 0 0 #ffaa00;
+}
+
+/* ----- Birds ----- */
+.icon-bird-wisp::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 55%;
+  transform: translate(-50%, -50%);
+  width: 16px;
+  height: 10px;
+  border-radius: 50%;
+  background: #a8e0f0;
+}
+.icon-bird-wisp::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 32px;
+  height: 4px;
+  background: linear-gradient(90deg, rgba(200, 240, 255, 0) 0%, rgba(200, 240, 255, 0.85) 40%, rgba(200, 240, 255, 0.85) 60%, rgba(200, 240, 255, 0) 100%);
+  border-radius: 50%;
+  margin-top: -3px;
+}
+
+.icon-bird-wren::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 55%;
+  transform: translate(-50%, -50%);
+  width: 14px;
+  height: 10px;
+  background: #ff44aa;
+  clip-path: polygon(0 50%, 35% 0, 100% 50%, 35% 100%);
+  filter: drop-shadow(0 0 4px rgba(255, 68, 170, 0.5));
+}
+.icon-bird-wren::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  margin-top: -1px;
+  transform: translate(-50%, -50%);
+  width: 28px;
+  height: 4px;
+  background: #66ccff;
+  clip-path: polygon(0 100%, 50% 0, 100% 100%);
+}
+
+.icon-bird-twin::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 55%;
+  transform: translate(-50%, -50%);
+  width: 16px;
+  height: 12px;
+  border-radius: 50%;
+  background: #7e9d5a;
+}
+.icon-bird-twin::after {
+  content: "";
+  position: absolute;
+  left: calc(50% + 8px);
+  top: calc(50% - 1px);
+  width: 0;
+  height: 0;
+  border-left: 6px solid #ddaa44;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  box-shadow: -1px 5px 0 -2px #ddaa44;
+}
+
 /* ------- Penguin speech bubble ------- */
 
 .speech-bubble {

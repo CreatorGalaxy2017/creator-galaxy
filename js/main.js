@@ -365,7 +365,14 @@ const star = {
   position: new THREE.Vector3(0, SURFACE_MAX_R, 0),
   forward: new THREE.Vector3(0, 0, 1),
   walkPhase: 0,
+  // Jump state — radial offset above the surface
+  airHeight: 0,
+  verticalVel: 0,
+  airborne: false,
 };
+
+const STAR_JUMP_VEL = 5.5;     // initial radial velocity (units/sec)
+const STAR_GRAVITY = 16;       // radial gravity (units/sec^2)
 
 // Place exactly on the displaced surface
 {
@@ -398,7 +405,7 @@ function applyStarTransform() {
   _stLeanQuat.setFromUnitVectors(_stUp, _stTerrainUp);
 
   starTheFox.quaternion.multiplyQuaternions(_stLeanQuat, _stBaseQuat);
-  starTheFox.position.copy(star.position);
+  starTheFox.position.copy(star.position).addScaledVector(_stUp, star.airHeight);
 }
 applyStarTransform();
 
@@ -804,13 +811,506 @@ function createPenguinItem() {
   return root;
 }
 
+// -----------------------------------------------------------------------------
+// Alien shark — red + black mismatched eyes, big teeth, glow stripes,
+// dives in and out via a vertical body bob.
+// -----------------------------------------------------------------------------
+
+function createSharkItem() {
+  const root = new THREE.Group();
+  const bodyGroup = new THREE.Group();
+  root.add(bodyGroup);
+
+  const skinMat = new THREE.MeshStandardMaterial({ color: 0x3f4f78, flatShading: true, roughness: 0.55, metalness: 0.15 });
+  const bellyMat = new THREE.MeshStandardMaterial({ color: 0xc8d4dc, flatShading: true });
+  const finMat = new THREE.MeshStandardMaterial({ color: 0x2f3d5e, flatShading: true });
+  const toothMat = new THREE.MeshStandardMaterial({ color: 0xfaf2e0, flatShading: true });
+  const eyeRed = new THREE.MeshStandardMaterial({ color: 0xff3030, emissive: 0xcc1010, emissiveIntensity: 0.6 });
+  const eyeBlack = new THREE.MeshStandardMaterial({ color: 0x121212 });
+  const glowMat = new THREE.MeshStandardMaterial({ color: 0x66ffcc, emissive: 0x44ffaa, emissiveIntensity: 0.7 });
+  const mouthMat = new THREE.MeshStandardMaterial({ color: 0x661122, flatShading: true });
+
+  // Body: elongated, slightly tapered
+  const bodyGeo = new THREE.SphereGeometry(0.08, 14, 8);
+  bodyGeo.scale(0.85, 0.85, 2.6);
+  const body = new THREE.Mesh(bodyGeo, skinMat);
+  body.position.y = 0.1;
+  bodyGroup.add(body);
+
+  // Lighter belly underneath
+  const bellyGeo = new THREE.SphereGeometry(0.075, 12, 6);
+  bellyGeo.scale(0.85, 0.45, 2.3);
+  const belly = new THREE.Mesh(bellyGeo, bellyMat);
+  belly.position.set(0, 0.062, 0);
+  bodyGroup.add(belly);
+
+  // Tail fin (vertical) at the back
+  const tailGeo = new THREE.ConeGeometry(0.06, 0.13, 4);
+  tailGeo.scale(0.5, 1, 1.6);
+  tailGeo.rotateX(Math.PI);
+  const tail = new THREE.Mesh(tailGeo, finMat);
+  tail.position.set(0, 0.1, -0.22);
+  bodyGroup.add(tail);
+
+  // Dorsal fin
+  const dorsalGeo = new THREE.ConeGeometry(0.05, 0.08, 3);
+  dorsalGeo.scale(0.6, 1, 0.5);
+  const dorsal = new THREE.Mesh(dorsalGeo, finMat);
+  dorsal.position.set(0, 0.19, 0.02);
+  bodyGroup.add(dorsal);
+
+  // Side pectoral fins
+  const sideFinGeo = new THREE.ConeGeometry(0.04, 0.09, 3);
+  sideFinGeo.rotateZ(-Math.PI / 2);
+  sideFinGeo.scale(1, 1, 0.4);
+  const finL = new THREE.Mesh(sideFinGeo, finMat);
+  const finR = new THREE.Mesh(sideFinGeo, finMat);
+  finL.position.set(-0.085, 0.07, 0.05);
+  finR.position.set(0.085, 0.07, 0.05);
+  finR.rotation.z = Math.PI;
+  bodyGroup.add(finL, finR);
+
+  // Asymmetric alien eyes — RED on left, BLACK on right (Sam's spec)
+  const eyeGeo = new THREE.SphereGeometry(0.016, 8, 6);
+  const eyeL = new THREE.Mesh(eyeGeo, eyeRed);
+  const eyeR = new THREE.Mesh(eyeGeo, eyeBlack);
+  eyeL.position.set(-0.045, 0.14, 0.16);
+  eyeR.position.set(0.045, 0.14, 0.16);
+  bodyGroup.add(eyeL, eyeR);
+
+  // Mouth gape
+  const mouthGeo = new THREE.SphereGeometry(0.06, 10, 6);
+  mouthGeo.scale(1, 0.45, 0.7);
+  const mouth = new THREE.Mesh(mouthGeo, mouthMat);
+  mouth.position.set(0, 0.08, 0.19);
+  bodyGroup.add(mouth);
+
+  // Big teeth — two rows of cones (upper points down, lower points up)
+  const toothGeo = new THREE.ConeGeometry(0.01, 0.028, 3);
+  for (let i = 0; i < 7; i++) {
+    const a = (i / 6 - 0.5) * Math.PI * 0.7;
+    const x = Math.sin(a) * 0.04;
+    const z = 0.22;
+    const t = new THREE.Mesh(toothGeo, toothMat);
+    t.position.set(x, 0.087, z);
+    t.rotation.x = Math.PI;
+    bodyGroup.add(t);
+    const t2 = new THREE.Mesh(toothGeo, toothMat);
+    t2.position.set(x, 0.058, z);
+    bodyGroup.add(t2);
+  }
+
+  // Glow stripes along sides
+  const stripeGeo = new THREE.SphereGeometry(0.011, 6, 5);
+  for (let i = 0; i < 4; i++) {
+    const z = 0.08 - i * 0.06;
+    const sl = new THREE.Mesh(stripeGeo, glowMat);
+    sl.position.set(-0.07, 0.11, z);
+    bodyGroup.add(sl);
+    const sr = new THREE.Mesh(stripeGeo, glowMat);
+    sr.position.set(0.07, 0.11, z);
+    bodyGroup.add(sr);
+  }
+
+  root.userData.parts = { bodyGroup, tail };
+  return root;
+}
+
+// -----------------------------------------------------------------------------
+// Alien dolphin — sleek body, FOUR side fins (two pairs), glowing pink dorsal
+// stripes, big glowing eyes.
+// -----------------------------------------------------------------------------
+
+function createDolphinItem() {
+  const root = new THREE.Group();
+  const bodyGroup = new THREE.Group();
+  root.add(bodyGroup);
+
+  const skinMat = new THREE.MeshStandardMaterial({ color: 0x86a8e6, flatShading: true, roughness: 0.3, metalness: 0.35 });
+  const bellyMat = new THREE.MeshStandardMaterial({ color: 0xeaf2fa, flatShading: true });
+  const finMat = new THREE.MeshStandardMaterial({ color: 0xc0a8e8, flatShading: true });
+  const eyeMat = new THREE.MeshStandardMaterial({ color: 0xfaf2e0, emissive: 0xff44aa, emissiveIntensity: 0.7 });
+  const stripeMat = new THREE.MeshStandardMaterial({ color: 0xff66cc, emissive: 0xff44aa, emissiveIntensity: 0.55 });
+
+  // Sleek body
+  const bodyGeo = new THREE.SphereGeometry(0.07, 12, 8);
+  bodyGeo.scale(0.7, 0.8, 2.4);
+  const body = new THREE.Mesh(bodyGeo, skinMat);
+  body.position.y = 0.1;
+  bodyGroup.add(body);
+
+  // Belly
+  const bellyGeo = new THREE.SphereGeometry(0.065, 10, 6);
+  bellyGeo.scale(0.7, 0.45, 2.0);
+  const belly = new THREE.Mesh(bellyGeo, bellyMat);
+  belly.position.set(0, 0.068, 0);
+  bodyGroup.add(belly);
+
+  // Long snout pointing forward
+  const snoutGeo = new THREE.ConeGeometry(0.035, 0.13, 8);
+  snoutGeo.rotateX(Math.PI / 2);
+  const snout = new THREE.Mesh(snoutGeo, skinMat);
+  snout.position.set(0, 0.1, 0.21);
+  bodyGroup.add(snout);
+
+  // Tail flukes (horizontal, two)
+  const flukeGeo = new THREE.ConeGeometry(0.05, 0.07, 4);
+  flukeGeo.scale(1.6, 1, 0.35);
+  flukeGeo.rotateZ(Math.PI / 2);
+  const flukeL = new THREE.Mesh(flukeGeo, finMat);
+  const flukeR = new THREE.Mesh(flukeGeo, finMat);
+  flukeL.position.set(-0.07, 0.1, -0.2);
+  flukeR.position.set(0.07, 0.1, -0.2);
+  flukeR.rotation.z = Math.PI;
+  bodyGroup.add(flukeL, flukeR);
+
+  // Dorsal fin
+  const dorsalGeo = new THREE.ConeGeometry(0.04, 0.07, 3);
+  dorsalGeo.scale(0.6, 1, 0.6);
+  const dorsal = new THREE.Mesh(dorsalGeo, finMat);
+  dorsal.position.set(0, 0.18, -0.05);
+  bodyGroup.add(dorsal);
+
+  // FOUR side fins (two pairs — alien!)
+  const sideFinGeo = new THREE.ConeGeometry(0.035, 0.08, 3);
+  sideFinGeo.rotateZ(-Math.PI / 2);
+  sideFinGeo.scale(1, 1, 0.5);
+  for (let i = 0; i < 4; i++) {
+    const isLeft = i % 2 === 0;
+    const isFront = i < 2;
+    const fin = new THREE.Mesh(sideFinGeo, finMat);
+    fin.position.set(isLeft ? -0.08 : 0.08, 0.08, isFront ? 0.04 : -0.06);
+    if (!isLeft) fin.rotation.z = Math.PI;
+    bodyGroup.add(fin);
+  }
+
+  // Big glowing pink eyes
+  const eyeGeo = new THREE.SphereGeometry(0.018, 8, 6);
+  const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+  const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
+  eyeL.position.set(-0.04, 0.14, 0.11);
+  eyeR.position.set(0.04, 0.14, 0.11);
+  bodyGroup.add(eyeL, eyeR);
+
+  // Glowing stripe of dots along the back
+  for (let i = 0; i < 5; i++) {
+    const stripe = new THREE.Mesh(new THREE.SphereGeometry(0.013, 6, 5), stripeMat);
+    stripe.position.set(0, 0.165, 0.1 - i * 0.06);
+    bodyGroup.add(stripe);
+  }
+
+  root.userData.parts = { bodyGroup };
+  return root;
+}
+
+// -----------------------------------------------------------------------------
+// Dragon — bat-style wings, horns, glowing orange eyes, visible saddle.
+// (Placeable only; the ride/mount mechanic is queued for a follow-up.)
+// -----------------------------------------------------------------------------
+
+function createDragonItem() {
+  const root = new THREE.Group();
+
+  const scaleMat = new THREE.MeshStandardMaterial({ color: 0x4a3a6e, flatShading: true, roughness: 0.5, metalness: 0.35 });
+  const bellyMat = new THREE.MeshStandardMaterial({ color: 0x8a6ab0, flatShading: true });
+  const wingMat = new THREE.MeshStandardMaterial({ color: 0x6a4a8a, flatShading: true, transparent: true, opacity: 0.88, side: THREE.DoubleSide });
+  const eyeMat = new THREE.MeshStandardMaterial({ color: 0xffaa00, emissive: 0xff5500, emissiveIntensity: 0.85 });
+  const saddleMat = new THREE.MeshStandardMaterial({ color: 0x6b3f24, flatShading: true });
+  const saddleAccentMat = new THREE.MeshStandardMaterial({ color: 0xc28846, flatShading: true });
+  const accentMat = new THREE.MeshStandardMaterial({ color: 0xff4488, emissive: 0xff2266, emissiveIntensity: 0.5 });
+
+  // Body
+  const bodyGeo = new THREE.SphereGeometry(0.12, 14, 8);
+  bodyGeo.scale(1.0, 0.9, 1.85);
+  const body = new THREE.Mesh(bodyGeo, scaleMat);
+  body.position.y = 0.18;
+  root.add(body);
+
+  // Belly
+  const bellyGeo = new THREE.SphereGeometry(0.115, 12, 6);
+  bellyGeo.scale(1.0, 0.5, 1.6);
+  const belly = new THREE.Mesh(bellyGeo, bellyMat);
+  belly.position.set(0, 0.12, 0);
+  root.add(belly);
+
+  // Long curving neck (cylinder angled up + forward)
+  const neckGeo = new THREE.CylinderGeometry(0.05, 0.085, 0.18, 8);
+  neckGeo.rotateX(Math.PI / 2.5);
+  const neck = new THREE.Mesh(neckGeo, scaleMat);
+  neck.position.set(0, 0.26, 0.16);
+  root.add(neck);
+
+  // Head
+  const headGeo = new THREE.SphereGeometry(0.085, 10, 6);
+  headGeo.scale(0.95, 0.9, 1.4);
+  const head = new THREE.Mesh(headGeo, scaleMat);
+  head.position.set(0, 0.32, 0.3);
+  root.add(head);
+
+  // Horns
+  const hornGeo = new THREE.ConeGeometry(0.018, 0.08, 5);
+  const hornL = new THREE.Mesh(hornGeo, accentMat);
+  const hornR = new THREE.Mesh(hornGeo, accentMat);
+  hornL.position.set(-0.045, 0.39, 0.27);
+  hornR.position.set(0.045, 0.39, 0.27);
+  hornL.rotation.z = 0.35;
+  hornR.rotation.z = -0.35;
+  root.add(hornL, hornR);
+
+  // Glowing orange eyes
+  const eyeGeo = new THREE.SphereGeometry(0.02, 8, 6);
+  const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+  const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
+  eyeL.position.set(-0.048, 0.335, 0.36);
+  eyeR.position.set(0.048, 0.335, 0.36);
+  root.add(eyeL, eyeR);
+
+  // Bat wings — simple triangles pivoted from shoulders
+  function makeWing(side) {
+    const geo = new THREE.BufferGeometry();
+    const verts = new Float32Array([
+      0,    0,    0,
+      0.32, 0.05, -0.04,
+      0,    0,    -0.22,
+    ]);
+    geo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+    geo.setIndex([0, 1, 2]);
+    geo.computeVertexNormals();
+    const w = new THREE.Mesh(geo, wingMat);
+    w.position.set(side * 0.1, 0.24, 0);
+    if (side < 0) w.scale.x = -1;
+    return w;
+  }
+  const wingL = makeWing(-1);
+  const wingR = makeWing(1);
+  root.add(wingL, wingR);
+
+  // Tail (long cone)
+  const tailGeo = new THREE.ConeGeometry(0.045, 0.3, 6);
+  tailGeo.rotateX(-Math.PI / 2);
+  const tail = new THREE.Mesh(tailGeo, scaleMat);
+  tail.position.set(0, 0.18, -0.27);
+  root.add(tail);
+
+  // Saddle (visible, prominent on back)
+  const saddleGeo = new THREE.BoxGeometry(0.16, 0.05, 0.13);
+  const saddle = new THREE.Mesh(saddleGeo, saddleMat);
+  saddle.position.set(0, 0.295, -0.02);
+  root.add(saddle);
+  const saddleHornGeo = new THREE.BoxGeometry(0.06, 0.05, 0.035);
+  const saddleHorn = new THREE.Mesh(saddleHornGeo, saddleAccentMat);
+  saddleHorn.position.set(0, 0.33, 0.05);
+  root.add(saddleHorn);
+
+  // Four short legs
+  for (let i = 0; i < 4; i++) {
+    const isFront = i < 2;
+    const isLeft = i % 2 === 0;
+    const legGeo = new THREE.CylinderGeometry(0.028, 0.028, 0.1, 6);
+    legGeo.translate(0, -0.05, 0);
+    const leg = new THREE.Mesh(legGeo, scaleMat);
+    leg.position.set(isLeft ? -0.09 : 0.09, 0.1, isFront ? 0.09 : -0.1);
+    root.add(leg);
+  }
+
+  root.userData.parts = { wingL, wingR, head };
+  return root;
+}
+
+// -----------------------------------------------------------------------------
+// Three alien birds — Sky Wisp, Plasma Wren, Twinbeak.
+// All share the same animation hook (root.userData.parts.wings).
+// -----------------------------------------------------------------------------
+
+function makeBirdWingGeo(span, depth) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+    0,     0, 0,
+    span,  0, -depth * 0.3,
+    0,     0, -depth,
+  ]), 3));
+  geo.setIndex([0, 1, 2]);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function createBirdSkyWispItem() {
+  const root = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0xa8e0f0, flatShading: true });
+  const wingMat = new THREE.MeshStandardMaterial({
+    color: 0xc8f0ff, flatShading: true, transparent: true, opacity: 0.55, side: THREE.DoubleSide,
+  });
+  const tailMat = new THREE.MeshStandardMaterial({
+    color: 0xb8e0ff, flatShading: true, transparent: true, opacity: 0.5, side: THREE.DoubleSide,
+  });
+  const eyeMat = new THREE.MeshStandardMaterial({ color: 0x111122 });
+  const beakMat = new THREE.MeshStandardMaterial({ color: 0xffaa66, flatShading: true });
+
+  const bodyGeo = new THREE.SphereGeometry(0.05, 10, 6);
+  bodyGeo.scale(1, 0.9, 1.5);
+  const body = new THREE.Mesh(bodyGeo, bodyMat);
+  root.add(body);
+
+  // Trailing ribbon-like tail
+  for (let i = 0; i < 4; i++) {
+    const tailGeo = new THREE.ConeGeometry(0.018 - i * 0.003, 0.05, 4);
+    tailGeo.rotateX(-Math.PI / 2);
+    const t = new THREE.Mesh(tailGeo, tailMat);
+    t.position.set(0, 0, -0.07 - i * 0.04);
+    root.add(t);
+  }
+
+  const wingGeo = makeBirdWingGeo(0.13, 0.08);
+  const wingL = new THREE.Mesh(wingGeo, wingMat);
+  const wingR = new THREE.Mesh(wingGeo, wingMat);
+  wingL.position.set(0, 0.015, 0);
+  wingR.position.set(0, 0.015, 0);
+  wingR.scale.x = -1;
+  root.add(wingL, wingR);
+
+  const beakGeo = new THREE.ConeGeometry(0.014, 0.03, 4);
+  beakGeo.rotateX(Math.PI / 2);
+  const beak = new THREE.Mesh(beakGeo, beakMat);
+  beak.position.set(0, 0, 0.08);
+  root.add(beak);
+
+  const eyeGeo = new THREE.SphereGeometry(0.008, 6, 5);
+  const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+  const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
+  eyeL.position.set(-0.022, 0.02, 0.045);
+  eyeR.position.set(0.022, 0.02, 0.045);
+  root.add(eyeL, eyeR);
+
+  root.userData.parts = { wings: [wingL, wingR] };
+  return root;
+}
+
+function createBirdPlasmaWrenItem() {
+  const root = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0xff44aa, flatShading: true, emissive: 0xff2288, emissiveIntensity: 0.25 });
+  const wingMat = new THREE.MeshStandardMaterial({ color: 0x66ccff, flatShading: true, emissive: 0x4488ff, emissiveIntensity: 0.35 });
+  const eyeMat = new THREE.MeshStandardMaterial({ color: 0xfff0aa, emissive: 0xffcc44, emissiveIntensity: 0.7 });
+
+  const bodyGeo = new THREE.IcosahedronGeometry(0.05, 0);
+  bodyGeo.scale(0.9, 0.9, 1.6);
+  const body = new THREE.Mesh(bodyGeo, bodyMat);
+  root.add(body);
+
+  const crestGeo = new THREE.ConeGeometry(0.014, 0.06, 4);
+  const crest = new THREE.Mesh(crestGeo, wingMat);
+  crest.position.set(0, 0.06, 0.01);
+  root.add(crest);
+
+  const wingGeo = makeBirdWingGeo(0.11, 0.07);
+  const wingL = new THREE.Mesh(wingGeo, wingMat);
+  const wingR = new THREE.Mesh(wingGeo, wingMat);
+  wingL.position.set(0, 0.02, 0);
+  wingR.position.set(0, 0.02, 0);
+  wingR.scale.x = -1;
+  root.add(wingL, wingR);
+
+  const beakGeo = new THREE.ConeGeometry(0.013, 0.028, 4);
+  beakGeo.rotateX(Math.PI / 2);
+  const beak = new THREE.Mesh(beakGeo, wingMat);
+  beak.position.set(0, -0.005, 0.075);
+  root.add(beak);
+
+  const eyeGeo = new THREE.SphereGeometry(0.009, 6, 5);
+  const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+  const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
+  eyeL.position.set(-0.022, 0.018, 0.04);
+  eyeR.position.set(0.022, 0.018, 0.04);
+  root.add(eyeL, eyeR);
+
+  const tailGeo = new THREE.ConeGeometry(0.02, 0.06, 4);
+  tailGeo.rotateX(-Math.PI / 2);
+  const tail = new THREE.Mesh(tailGeo, bodyMat);
+  tail.position.set(0, 0.005, -0.075);
+  root.add(tail);
+
+  root.userData.parts = { wings: [wingL, wingR] };
+  return root;
+}
+
+function createBirdTwinbeakItem() {
+  const root = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0x7e9d5a, flatShading: true });
+  const wingMat = new THREE.MeshStandardMaterial({ color: 0x5a7d3a, flatShading: true });
+  const bellyMat = new THREE.MeshStandardMaterial({ color: 0xd6c878, flatShading: true });
+  const beakMat = new THREE.MeshStandardMaterial({ color: 0xddaa44, flatShading: true });
+  const eyeMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
+  const tuftMat = new THREE.MeshStandardMaterial({ color: 0xddaa44, flatShading: true });
+
+  const bodyGeo = new THREE.SphereGeometry(0.055, 10, 8);
+  bodyGeo.scale(1.1, 1, 1.45);
+  const body = new THREE.Mesh(bodyGeo, bodyMat);
+  root.add(body);
+
+  // Belly
+  const bellyGeo = new THREE.SphereGeometry(0.05, 8, 6);
+  bellyGeo.scale(0.9, 0.45, 1.25);
+  const belly = new THREE.Mesh(bellyGeo, bellyMat);
+  belly.position.y = -0.025;
+  root.add(belly);
+
+  // Two beaks (alien feature)
+  const beakGeo = new THREE.ConeGeometry(0.013, 0.04, 4);
+  beakGeo.rotateX(Math.PI / 2);
+  const beak1 = new THREE.Mesh(beakGeo, beakMat);
+  beak1.position.set(-0.018, 0, 0.08);
+  beak1.rotation.y = -0.2;
+  const beak2 = new THREE.Mesh(beakGeo, beakMat);
+  beak2.position.set(0.018, 0, 0.08);
+  beak2.rotation.y = 0.2;
+  root.add(beak1, beak2);
+
+  // Crown tuft
+  const crown = new THREE.Mesh(new THREE.SphereGeometry(0.02, 6, 5), tuftMat);
+  crown.position.set(0, 0.055, 0.02);
+  root.add(crown);
+
+  // Wings (rounded triangles)
+  const wingGeo = makeBirdWingGeo(0.1, 0.06);
+  const wingL = new THREE.Mesh(wingGeo, wingMat);
+  const wingR = new THREE.Mesh(wingGeo, wingMat);
+  wingL.position.set(0, 0.012, 0);
+  wingR.position.set(0, 0.012, 0);
+  wingR.scale.x = -1;
+  root.add(wingL, wingR);
+
+  // Four small eyes (alien!)
+  const eyeGeo = new THREE.SphereGeometry(0.008, 6, 5);
+  for (let i = 0; i < 4; i++) {
+    const e = new THREE.Mesh(eyeGeo, eyeMat);
+    const x = i % 2 === 0 ? -0.022 : 0.022;
+    const y = i < 2 ? 0.028 : 0.012;
+    e.position.set(x, y, 0.045);
+    root.add(e);
+  }
+
+  const tailGeo = new THREE.SphereGeometry(0.026, 6, 5);
+  tailGeo.scale(1, 0.55, 1.2);
+  const tail = new THREE.Mesh(tailGeo, bodyMat);
+  tail.position.set(0, 0, -0.08);
+  root.add(tail);
+
+  root.userData.parts = { wings: [wingL, wingR] };
+  return root;
+}
+
 const ITEM_TYPES = {
-  tree:     { label: 'Tree',     build: createTreeItem,     defaultScale: 6,   collisionR: 0.035, collisionType: 'solid' },
-  rock:     { label: 'Rock',     build: createRockItem,     defaultScale: 4,   collisionR: 0.06,  collisionType: 'solid' },
-  bush:     { label: 'Bush',     build: createBushItem,     defaultScale: 3,   collisionR: 0.05,  collisionType: 'solid' },
-  mushroom: { label: 'Mushroom', build: createMushroomItem, defaultScale: 2.5, collisionR: 0.04,  collisionType: 'solid' },
-  water:    { label: 'Water',    build: createWaterItem,    defaultScale: 4,   collisionR: 0.21,  collisionType: 'submerge' },
-  penguin:  { label: 'Penguin',  build: createPenguinItem,  defaultScale: 1.4, collisionR: 0.10,  collisionType: 'solid', behavior: 'creature' },
+  tree:     { label: 'Tree',        build: createTreeItem,            defaultScale: 6,   collisionR: 0.035, collisionType: 'solid' },
+  rock:     { label: 'Rock',        build: createRockItem,            defaultScale: 4,   collisionR: 0.06,  collisionType: 'solid' },
+  bush:     { label: 'Bush',        build: createBushItem,            defaultScale: 3,   collisionR: 0.05,  collisionType: 'solid' },
+  mushroom: { label: 'Mushroom',    build: createMushroomItem,        defaultScale: 2.5, collisionR: 0.04,  collisionType: 'solid' },
+  water:    { label: 'Pond',        build: createWaterItem,           defaultScale: 4,   collisionR: 0.21,  collisionType: 'submerge' },
+  penguin:  { label: 'Penguin',     build: createPenguinItem,         defaultScale: 1.4, collisionR: 0.10,  collisionType: 'solid', behavior: 'creature' },
+  shark:    { label: 'Shark',       build: createSharkItem,           defaultScale: 1.2, collisionR: 0.16,  collisionType: 'solid', behavior: 'aquatic' },
+  dolphin:  { label: 'Dolphin',     build: createDolphinItem,         defaultScale: 1.3, collisionR: 0.14,  collisionType: 'solid', behavior: 'aquatic' },
+  dragon:   { label: 'Dragon',      build: createDragonItem,          defaultScale: 2.4, collisionR: 0.20,  collisionType: 'solid', behavior: 'dragon' },
+  birdWisp: { label: 'Sky Wisp',    build: createBirdSkyWispItem,     defaultScale: 1.0, collisionR: 0.04,  collisionType: 'solid', behavior: 'flyer', flightAlt: 3.5, flightRadius: 6 },
+  birdWren: { label: 'Plasma Wren', build: createBirdPlasmaWrenItem,  defaultScale: 0.9, collisionR: 0.04,  collisionType: 'solid', behavior: 'flyer', flightAlt: 5.0, flightRadius: 8 },
+  birdTwin: { label: 'Twinbeak',    build: createBirdTwinbeakItem,    defaultScale: 1.0, collisionR: 0.05,  collisionType: 'solid', behavior: 'flyer', flightAlt: 4.0, flightRadius: 7 },
 };
 
 // =============================================================================
@@ -864,10 +1364,16 @@ function addItem(type, dir) {
   return item;
 }
 
-function moveItem(item, newDir) {
+function moveItem(item, newDir, resetHome = false) {
   const pos = placeItemOnSurface(item.root, newDir, item.yaw);
   item.dir.copy(newDir);
   item.pos.copy(pos);
+  // When the user drags an item, re-anchor its wander/flight AI to the new
+  // spot so it doesn't try to crawl back to where it started.
+  if (resetHome && item.ai && item.ai.homeDir) {
+    item.ai.homeDir.copy(newDir);
+    if (item.ai.targetDir) item.ai.targetDir.copy(newDir);
+  }
 }
 
 function removeItem(item) {
@@ -1227,10 +1733,18 @@ const PENGUIN_WANDER_ARC = 0.025;
 const PENGUIN_NOTICE_DIST = 4.0;
 
 function updateCreatures(dt) {
+  const t = clock.elapsedTime;
   for (const item of placedItems) {
     const def = ITEM_TYPES[item.type];
-    if (def.behavior !== 'creature') continue;
+    const behavior = def.behavior;
+    if (behavior === 'creature') updatePenguinAI(item, dt);
+    else if (behavior === 'aquatic') updateAquaticAI(item, dt, t);
+    else if (behavior === 'flyer') updateFlyerAI(item, dt, t);
+    else if (behavior === 'dragon') updateDragonAI(item, dt, t);
+  }
+}
 
+function updatePenguinAI(item, dt) {
     if (!item.ai) {
       item.ai = {
         homeDir: item.dir.clone(),
@@ -1375,6 +1889,169 @@ function updateCreatures(dt) {
         parts.antennaGroup.rotation.x = Math.sin(ai.walkAnim * 0.5 + 1.1) * 0.12;
       }
     }
+}
+
+// -----------------------------------------------------------------------------
+// Aquatic creatures (shark, dolphin) — penguin-style wander + vertical
+// dive-bob animation.
+// -----------------------------------------------------------------------------
+
+function updateAquaticAI(item, dt, t) {
+  if (!item.ai) {
+    item.ai = {
+      homeDir: item.dir.clone(),
+      targetDir: item.dir.clone(),
+      retargetIn: 1 + Math.random() * 3,
+      facingDir: null,
+      walking: false,
+      divePhase: Math.random() * Math.PI * 2,
+    };
+  }
+  const ai = item.ai;
+
+  ai.retargetIn -= dt;
+  if (ai.retargetIn <= 0) {
+    _crRef.set(0, 1, 0);
+    if (Math.abs(ai.homeDir.y) > 0.95) _crRef.set(1, 0, 0);
+    _crTan.crossVectors(ai.homeDir, _crRef).normalize();
+    _crTan.applyAxisAngle(ai.homeDir, Math.random() * Math.PI * 2);
+    _crAxis.crossVectors(ai.homeDir, _crTan).normalize();
+    const arc = 0.035 * (0.4 + Math.random() * 0.6);
+    ai.targetDir.copy(ai.homeDir).applyAxisAngle(_crAxis, arc).normalize();
+    ai.retargetIn = 4 + Math.random() * 5;
+  }
+
+  _crUpL.copy(item.dir);
+  ai.walking = false;
+  let desiredFacing = null;
+
+  const angleToTarget = item.dir.angleTo(ai.targetDir);
+  if (angleToTarget > 0.0005) {
+    ai.walking = true;
+    _crMoveAxis.crossVectors(item.dir, ai.targetDir);
+    if (_crMoveAxis.lengthSq() > 1e-8) {
+      _crMoveAxis.normalize();
+      const step = Math.min(angleToTarget, 0.011 * dt * 60);
+      const newDir = item.dir.clone().applyAxisAngle(_crMoveAxis, step).normalize();
+      _crFwd.crossVectors(_crMoveAxis, _crUpL).normalize();
+      desiredFacing = _crFwd.clone();
+      moveItem(item, newDir);
+    }
+  }
+
+  if (desiredFacing) {
+    if (!ai.facingDir) ai.facingDir = desiredFacing.clone();
+    else {
+      const angle = ai.facingDir.angleTo(desiredFacing);
+      if (angle > 0.001) {
+        const maxStep = 3.0 * dt;
+        const stepFrac = Math.min(1, maxStep / angle);
+        const axis = new THREE.Vector3().crossVectors(ai.facingDir, desiredFacing);
+        if (axis.lengthSq() > 1e-6) {
+          axis.normalize();
+          ai.facingDir.applyAxisAngle(axis, stepFrac * angle);
+        }
+        ai.facingDir.projectOnPlane(_crUpL).normalize();
+      }
+    }
+    setItemFacing(item, ai.facingDir);
+  }
+
+  // Dive bob — body group oscillates up/down and pitches forward/back
+  ai.divePhase += dt * 0.9;
+  const parts = item.root.userData.parts;
+  if (parts && parts.bodyGroup) {
+    parts.bodyGroup.position.y = Math.sin(ai.divePhase) * 0.16;
+    parts.bodyGroup.rotation.x = Math.cos(ai.divePhase) * 0.35;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Flyers (alien birds) — orbit at altitude above their placement point.
+// -----------------------------------------------------------------------------
+
+const _flyTan1 = new THREE.Vector3();
+const _flyTan2 = new THREE.Vector3();
+const _flyDir = new THREE.Vector3();
+const _flyVel = new THREE.Vector3();
+const _flyRight = new THREE.Vector3();
+const _flyBasis = new THREE.Matrix4();
+const _flyRef = new THREE.Vector3();
+
+function updateFlyerAI(item, dt, t) {
+  const def = ITEM_TYPES[item.type];
+  if (!item.ai) {
+    item.ai = {
+      homeDir: item.dir.clone(),
+      orbitAngle: Math.random() * Math.PI * 2,
+      orbitSpeed: 0.55 + Math.random() * 0.5,
+      orbitRadius: (def.flightRadius || 6) * (0.7 + Math.random() * 0.6),
+      altitude: (def.flightAlt || 4) * (0.85 + Math.random() * 0.3),
+      altOscPhase: Math.random() * Math.PI * 2,
+    };
+  }
+  const ai = item.ai;
+
+  ai.orbitAngle += dt * ai.orbitSpeed;
+  ai.altOscPhase += dt * 1.6;
+
+  // Build tangent basis at the bird's home point
+  _flyRef.set(0, 1, 0);
+  if (Math.abs(ai.homeDir.y) > 0.95) _flyRef.set(1, 0, 0);
+  _flyTan1.crossVectors(ai.homeDir, _flyRef).normalize();
+  _flyTan2.crossVectors(ai.homeDir, _flyTan1).normalize();
+
+  const arcRadius = ai.orbitRadius / PLANET_RADIUS;
+  const cosA = Math.cos(ai.orbitAngle);
+  const sinA = Math.sin(ai.orbitAngle);
+  _flyDir.copy(ai.homeDir)
+    .addScaledVector(_flyTan1, cosA * arcRadius)
+    .addScaledVector(_flyTan2, sinA * arcRadius)
+    .normalize();
+
+  const surfaceR = surfaceHeightAt(_flyDir);
+  const altWobble = Math.sin(ai.altOscPhase) * 0.35;
+  const r = surfaceR + ai.altitude + altWobble;
+
+  item.dir.copy(_flyDir);
+  item.pos.copy(_flyDir).multiplyScalar(r);
+  item.root.position.copy(item.pos);
+
+  // Facing = direction of motion (tangent to the orbit on the sphere)
+  _flyVel.copy(_flyTan1).multiplyScalar(-sinA)
+    .addScaledVector(_flyTan2, cosA)
+    .projectOnPlane(_flyDir)
+    .normalize();
+  _flyRight.crossVectors(_flyDir, _flyVel).normalize();
+  _flyBasis.makeBasis(_flyRight, _flyDir, _flyVel);
+  item.root.quaternion.setFromRotationMatrix(_flyBasis);
+
+  // Wing flap
+  const parts = item.root.userData.parts;
+  if (parts && parts.wings) {
+    const flap = Math.sin(t * 9) * 0.7;
+    parts.wings[0].rotation.z = 0.3 + flap;
+    parts.wings[1].rotation.z = -0.3 - flap;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Dragon — placeholder idle animation while we wait on the ride mechanic.
+// -----------------------------------------------------------------------------
+
+function updateDragonAI(item, dt, t) {
+  if (!item.ai) item.ai = { idle: 0 };
+  item.ai.idle += dt;
+  const parts = item.root.userData.parts;
+  if (parts) {
+    if (parts.wingL && parts.wingR) {
+      const flap = Math.sin(item.ai.idle * 1.5) * 0.18;
+      parts.wingL.rotation.z = 0.08 + flap;
+      parts.wingR.rotation.z = -0.08 - flap;
+    }
+    if (parts.head) {
+      parts.head.rotation.y = Math.sin(item.ai.idle * 0.45) * 0.18;
+    }
   }
 }
 
@@ -1424,6 +2101,14 @@ const KEY_MAP = {
 };
 
 window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (!star.airborne) {
+      star.verticalVel = STAR_JUMP_VEL;
+      star.airborne = true;
+    }
+    return;
+  }
   const action = KEY_MAP[e.code];
   if (!action) return;
   e.preventDefault();
@@ -1696,7 +2381,7 @@ function handleCanvasPointerMove(e) {
 
   if (dragging.type === 'item') {
     const newDir = _itemLocal.clone().normalize();
-    moveItem(dragging.item, newDir);
+    moveItem(dragging.item, newDir, true);
     if (selectionHelper) selectionHelper.update();
   } else if (dragging.type === 'handle') {
     const handle = dragging.handle;
@@ -1884,6 +2569,17 @@ function animate() {
 
   // Glue Star to the surface (sinking into water if she's standing on it)
   settleStarOnSurface(star.position);
+
+  // Jump physics — integrated radial velocity, gravity pulls back to ground
+  if (star.airborne) {
+    star.airHeight += star.verticalVel * dt;
+    star.verticalVel -= STAR_GRAVITY * dt;
+    if (star.airHeight <= 0) {
+      star.airHeight = 0;
+      star.verticalVel = 0;
+      star.airborne = false;
+    }
+  }
 
   // -------- Fox animation --------
   const fx = starTheFox.userData;
