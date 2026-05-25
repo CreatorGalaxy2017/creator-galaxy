@@ -568,31 +568,62 @@ const waterMat = new THREE.MeshStandardMaterial({
   flatShading: false,
   side: THREE.DoubleSide,
 });
-const waterEdgeMat = new THREE.MeshStandardMaterial({
-  color: 0x6fb1e6,
-  transparent: true,
-  opacity: 0.55,
-  roughness: 0.3,
-});
+
+const WATER_EDGE_COUNT = 12;
+const WATER_DEFAULT_RADIUS = 0.22;
+const WATER_BASE_Y = 0.005;
+
+// Builds the pond as a triangle fan from a centre vertex out to N edge
+// vertices. Edge vertex (x, z) values come from item.edgePoints — that's how
+// dragging a handle reshapes the pond (a "stream" is just a few edge points
+// pulled far out in one direction).
+function buildWaterDiskGeometry(edgePoints) {
+  const N = edgePoints.length;
+  const positions = new Float32Array((N + 1) * 3);
+  positions[0] = 0;
+  positions[1] = WATER_BASE_Y;
+  positions[2] = 0;
+  for (let i = 0; i < N; i++) {
+    const p = edgePoints[i];
+    const o = (i + 1) * 3;
+    positions[o] = p.x;
+    positions[o + 1] = WATER_BASE_Y;
+    positions[o + 2] = p.z;
+  }
+  const indices = new Uint16Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    indices[i * 3] = 0;
+    indices[i * 3 + 1] = i + 1;
+    indices[i * 3 + 2] = ((i + 1) % N) + 1;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setIndex(new THREE.BufferAttribute(indices, 1));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function defaultWaterEdgePoints() {
+  const pts = [];
+  for (let i = 0; i < WATER_EDGE_COUNT; i++) {
+    const a = (i / WATER_EDGE_COUNT) * Math.PI * 2;
+    pts.push({
+      x: Math.cos(a) * WATER_DEFAULT_RADIUS,
+      z: Math.sin(a) * WATER_DEFAULT_RADIUS,
+    });
+  }
+  return pts;
+}
 
 function createWaterItem() {
   const g = new THREE.Group();
-  // Use a higher-res circle so the wave animation has enough verts to look smooth
-  const geo = new THREE.CircleGeometry(0.22, 36);
-  geo.rotateX(-Math.PI / 2);
-  geo.translate(0, 0.005, 0);
+  const edgePoints = defaultWaterEdgePoints();
+  const geo = buildWaterDiskGeometry(edgePoints);
   const disk = new THREE.Mesh(geo, waterMat);
   g.add(disk);
-  // Subtle thicker rim disk for visual edge
-  const rimGeo = new THREE.RingGeometry(0.205, 0.235, 36);
-  rimGeo.rotateX(-Math.PI / 2);
-  rimGeo.translate(0, 0.008, 0);
-  const rim = new THREE.Mesh(rimGeo, waterEdgeMat);
-  g.add(rim);
 
-  // Cache the disk's original positions so animateWater can re-displace each frame
   g.userData.waterDisk = disk;
-  g.userData.waterOrig = disk.geometry.attributes.position.array.slice();
+  g.userData.initialEdgePoints = edgePoints;
   return g;
 }
 
@@ -600,21 +631,77 @@ function animateWater(t) {
   for (const item of placedItems) {
     if (item.type !== 'water') continue;
     const disk = item.root.userData.waterDisk;
-    const orig = item.root.userData.waterOrig;
-    if (!disk || !orig) continue;
+    if (!disk || !item.edgePoints) continue;
     const arr = disk.geometry.attributes.position.array;
-    for (let i = 0; i < arr.length; i += 3) {
-      const ox = orig[i];
-      const oz = orig[i + 2];
-      const wave =
-        Math.sin(ox * 6.5 + t * 1.4) * 0.005 +
-        Math.cos(oz * 8.2 + t * 1.05) * 0.004 +
-        Math.sin((ox + oz) * 3.1 + t * 0.65) * 0.003;
-      arr[i + 1] = orig[i + 1] + wave;
+
+    // Centre vertex bobs slightly
+    arr[1] = WATER_BASE_Y + Math.sin(t * 0.8) * 0.0012;
+
+    for (let i = 0; i < item.edgePoints.length; i++) {
+      const p = item.edgePoints[i];
+      const offset = (i + 1) * 3;
+      arr[offset] = p.x;
+      arr[offset + 1] = WATER_BASE_Y +
+        Math.sin(p.x * 6.5 + t * 1.4) * 0.005 +
+        Math.cos(p.z * 8.2 + t * 1.05) * 0.004 +
+        Math.sin((p.x + p.z) * 3.1 + t * 0.65) * 0.003;
+      arr[offset + 2] = p.z;
     }
+
     disk.geometry.attributes.position.needsUpdate = true;
     disk.geometry.computeVertexNormals();
   }
+}
+
+// -----------------------------------------------------------------------------
+// Pond local-frame helpers (used by handle drag + star-in-water check)
+// -----------------------------------------------------------------------------
+
+const _wlTerrainUp = new THREE.Vector3();
+const _wlRef = new THREE.Vector3();
+const _wlLocalZ = new THREE.Vector3();
+const _wlLocalX = new THREE.Vector3();
+
+function computeWaterLocalBasis(item, outX, outZ, outUp) {
+  computeTerrainNormal(item.dir, _wlTerrainUp);
+  outUp.copy(_wlTerrainUp);
+  _wlRef.set(0, 1, 0);
+  if (Math.abs(_wlTerrainUp.y) > 0.95) _wlRef.set(1, 0, 0);
+  outZ.crossVectors(_wlTerrainUp, _wlRef).normalize();
+  outZ.applyAxisAngle(_wlTerrainUp, item.yaw);
+  outX.crossVectors(_wlTerrainUp, outZ).normalize();
+}
+
+const _wlPondPlanarVec = new THREE.Vector3();
+
+// 2D point-in-polygon (ray-cast across +x). edgePoints are in pond local
+// (x, z), so we treat them as 2D points.
+function pointInWaterPolygon(px, pz, edgePoints) {
+  let inside = false;
+  for (let i = 0, j = edgePoints.length - 1; i < edgePoints.length; j = i++) {
+    const xi = edgePoints[i].x;
+    const zi = edgePoints[i].z;
+    const xj = edgePoints[j].x;
+    const zj = edgePoints[j].z;
+    if (((zi > pz) !== (zj > pz)) &&
+        (px < (xj - xi) * (pz - zi) / (zj - zi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+// Convert a planet-local point to pond-local (x, z) and run point-in-polygon.
+function pointInWater(item, planetLocalPoint) {
+  computeWaterLocalBasis(item, _wlLocalX, _wlLocalZ, _wlTerrainUp);
+  _wlPondPlanarVec.copy(planetLocalPoint).sub(item.pos).projectOnPlane(_wlTerrainUp);
+  const px = _wlPondPlanarVec.dot(_wlLocalX) / item.scale;
+  const pz = _wlPondPlanarVec.dot(_wlLocalZ) / item.scale;
+  return pointInWaterPolygon(px, pz, item.edgePoints);
+}
+
+function starInWater(item) {
+  return pointInWater(item, star.position);
 }
 
 const penguinBodyMat = new THREE.MeshStandardMaterial({ color: 0x3a3d6e, flatShading: true, roughness: 0.6 });
@@ -767,6 +854,11 @@ function addItem(type, dir) {
   itemsGroup.add(root);
 
   const item = { type, root, scale, dir: dir.clone(), pos: pos.clone(), yaw };
+  if (root.userData.initialEdgePoints) {
+    item.edgePoints = root.userData.initialEdgePoints;
+    delete root.userData.initialEdgePoints;
+    updateWaterMaxRadius(item);
+  }
   root.userData.item = item;
   placedItems.push(item);
   return item;
@@ -782,6 +874,7 @@ function removeItem(item) {
   const idx = placedItems.indexOf(item);
   if (idx === -1) return;
   placedItems.splice(idx, 1);
+  if (item.handlesGroup) hideWaterHandles(item);
   itemsGroup.remove(item.root);
   if (item.bubble) {
     item.bubble.remove();
@@ -789,7 +882,7 @@ function removeItem(item) {
   }
   item.root.traverse((obj) => {
     if (obj.geometry && obj.geometry !== trunkGeo && obj.geometry !== canopyLowerGeo &&
-        obj.geometry !== canopyUpperGeo) {
+        obj.geometry !== canopyUpperGeo && obj.geometry !== handleGeo) {
       obj.geometry.dispose?.();
     }
   });
@@ -838,9 +931,10 @@ function resolveCollisions(targetPos) {
 }
 
 const STAR_WADE_DEPTH = 0.18;
+const _settleDir = new THREE.Vector3();
 
 // Adjust Star's radial height: surface normally, surface - WADE_DEPTH inside
-// any 'submerge' item.
+// any 'submerge' item (uses the pond polygon, so stream-shaped ponds work).
 function settleStarOnSurface(starPos) {
   const dir = _settleDir.copy(starPos).normalize();
   let depthOffset = 0;
@@ -848,11 +942,14 @@ function settleStarOnSurface(starPos) {
   for (const item of placedItems) {
     const def = ITEM_TYPES[item.type];
     if (def.collisionType !== 'submerge') continue;
+    if (!item.edgePoints) continue;
+    // Cheap distance prefilter — pond can't reach further than its max edge
     const dx = starPos.x - item.pos.x;
     const dy = starPos.y - item.pos.y;
     const dz = starPos.z - item.pos.z;
-    const r = def.collisionR * item.scale;
-    if (dx * dx + dy * dy + dz * dz < r * r) {
+    const maxR = (item.maxEdgeRadius || 0.3) * item.scale + 0.1;
+    if (dx * dx + dy * dy + dz * dz > maxR * maxR) continue;
+    if (starInWater(item)) {
       depthOffset = STAR_WADE_DEPTH;
       break;
     }
@@ -860,7 +957,62 @@ function settleStarOnSurface(starPos) {
 
   starPos.copy(dir).multiplyScalar(surfaceHeightAt(dir) - depthOffset);
 }
-const _settleDir = new THREE.Vector3();
+
+// Cache the largest edgePoint distance per item so the prefilter above can
+// reject far-away ponds without running point-in-polygon.
+function updateWaterMaxRadius(item) {
+  if (!item.edgePoints) return;
+  let m = 0;
+  for (const p of item.edgePoints) {
+    const d = Math.sqrt(p.x * p.x + p.z * p.z);
+    if (d > m) m = d;
+  }
+  item.maxEdgeRadius = m;
+}
+
+// -----------------------------------------------------------------------------
+// Water push: drift Star while she's inside a pond. Direction rotates slowly
+// over time so it feels like a swirling current.
+// -----------------------------------------------------------------------------
+
+const _wpUpL = new THREE.Vector3();
+const _wpTan1 = new THREE.Vector3();
+const _wpTan2 = new THREE.Vector3();
+const _wpRef = new THREE.Vector3();
+const _wpCurrent = new THREE.Vector3();
+const _wpAxis = new THREE.Vector3();
+const WATER_PUSH_LINEAR_SPEED = 0.45; // units / second along the surface
+
+function applyWaterPush(dt) {
+  let inWater = false;
+  for (const item of placedItems) {
+    if (item.type !== 'water') continue;
+    if (!item.edgePoints) continue;
+    if (starInWater(item)) {
+      inWater = true;
+      break;
+    }
+  }
+  if (!inWater) return;
+
+  _wpUpL.copy(star.position).normalize();
+  _wpRef.set(0, 1, 0);
+  if (Math.abs(_wpUpL.y) > 0.95) _wpRef.set(1, 0, 0);
+  _wpTan1.crossVectors(_wpUpL, _wpRef).normalize();
+  _wpTan2.crossVectors(_wpUpL, _wpTan1).normalize();
+
+  const t = clock.elapsedTime;
+  const angle = t * 0.35;
+  _wpCurrent
+    .copy(_wpTan1).multiplyScalar(Math.cos(angle))
+    .addScaledVector(_wpTan2, Math.sin(angle));
+
+  _wpAxis.crossVectors(_wpCurrent, _wpUpL).normalize();
+  const angSpeed = WATER_PUSH_LINEAR_SPEED / PLANET_RADIUS;
+  const stepAngle = angSpeed * dt;
+  star.position.applyAxisAngle(_wpAxis, stepAngle);
+  star.forward.applyAxisAngle(_wpAxis, stepAngle);
+}
 
 // =============================================================================
 // Creatures — wander AI + flipper / antenna animation
@@ -1366,7 +1518,43 @@ function setActiveTool(toolKey) {
   }
 }
 
+const handleMat = new THREE.MeshStandardMaterial({
+  color: 0xfff04d,
+  emissive: 0xfff04d,
+  emissiveIntensity: 0.45,
+  roughness: 0.35,
+  metalness: 0.1,
+});
+const handleGeo = new THREE.SphereGeometry(0.03, 10, 8);
+
+function showWaterHandles(item) {
+  if (!item.edgePoints) return;
+  const handles = new THREE.Group();
+  for (let i = 0; i < item.edgePoints.length; i++) {
+    const ep = item.edgePoints[i];
+    const h = new THREE.Mesh(handleGeo, handleMat);
+    h.position.set(ep.x, 0.02, ep.z);
+    h.userData.isHandle = true;
+    h.userData.waterItem = item;
+    h.userData.handleIndex = i;
+    handles.add(h);
+  }
+  item.root.add(handles);
+  item.handlesGroup = handles;
+}
+
+function hideWaterHandles(item) {
+  if (item.handlesGroup) {
+    item.root.remove(item.handlesGroup);
+    // geometry/material are shared; nothing to dispose
+    item.handlesGroup = null;
+  }
+}
+
 function setSelectedItem(item) {
+  // Clear handles from previous selection
+  if (selectedItem && selectedItem.type === 'water') hideWaterHandles(selectedItem);
+
   selectedItem = item;
   if (selectionHelper) {
     selectionHelper.parent?.remove(selectionHelper);
@@ -1384,8 +1572,30 @@ function setSelectedItem(item) {
       panel.classList.add('is-visible');
       panel.querySelector('.item-name').textContent = ITEM_TYPES[item.type].label;
     }
+    if (item.type === 'water') showWaterHandles(item);
   } else if (panel) {
     panel.classList.remove('is-visible');
+  }
+}
+
+function updateWaterHandlePositions(item) {
+  if (!item.handlesGroup || !item.edgePoints) return;
+  const children = item.handlesGroup.children;
+  for (let i = 0; i < item.edgePoints.length && i < children.length; i++) {
+    const ep = item.edgePoints[i];
+    children[i].position.set(ep.x, 0.02, ep.z);
+  }
+}
+
+function moveWaterEdgePoint(item, idx, x, z) {
+  item.edgePoints[idx].x = x;
+  item.edgePoints[idx].z = z;
+  // The animateWater loop reads from item.edgePoints, so the disk's geometry
+  // updates implicitly next frame. We just nudge the cached max radius and
+  // the handle visual.
+  updateWaterMaxRadius(item);
+  if (item.handlesGroup) {
+    item.handlesGroup.children[idx]?.position.set(x, 0.02, z);
   }
 }
 
@@ -1406,8 +1616,11 @@ function pickAtMouse(e) {
   const itemHits = raycaster.intersectObject(itemsGroup, true);
   if (itemHits.length > 0) {
     let n = itemHits[0].object;
-    while (n && !n.userData?.isPlacedItem) n = n.parent;
-    if (n) return { type: 'item', item: n.userData.item, hit: itemHits[0] };
+    while (n) {
+      if (n.userData?.isHandle) return { type: 'handle', handle: n, hit: itemHits[0] };
+      if (n.userData?.isPlacedItem) return { type: 'item', item: n.userData.item, hit: itemHits[0] };
+      n = n.parent;
+    }
   }
 
   const planetHits = raycaster.intersectObject(planet, false);
@@ -1444,14 +1657,25 @@ function handleCanvasPointerDown(e) {
 
   if (editMode && !activeTool) {
     const pick = pickAtMouse(e);
-    if (pick && pick.type === 'item') {
-      pointerDownInfo.itemPicked = pick.item;
-      setSelectedItem(pick.item);
-      dragging = pick.item;
-      canvas.setPointerCapture?.(e.pointerId);
+    if (pick) {
+      if (pick.type === 'handle') {
+        pointerDownInfo.handlePicked = pick.handle;
+        dragging = { type: 'handle', handle: pick.handle };
+        canvas.setPointerCapture?.(e.pointerId);
+      } else if (pick.type === 'item') {
+        pointerDownInfo.itemPicked = pick.item;
+        setSelectedItem(pick.item);
+        dragging = { type: 'item', item: pick.item };
+        canvas.setPointerCapture?.(e.pointerId);
+      }
     }
   }
 }
+
+const _hdLocalX = new THREE.Vector3();
+const _hdLocalZ = new THREE.Vector3();
+const _hdTerrainUp = new THREE.Vector3();
+const _hdFromCenter = new THREE.Vector3();
 
 function handleCanvasPointerMove(e) {
   if (!pointerDownInfo) return;
@@ -1469,9 +1693,22 @@ function handleCanvasPointerMove(e) {
 
   _itemLocal.copy(hits[0].point);
   planet.worldToLocal(_itemLocal);
-  const newDir = _itemLocal.clone().normalize();
-  moveItem(dragging, newDir);
-  if (selectionHelper) selectionHelper.update();
+
+  if (dragging.type === 'item') {
+    const newDir = _itemLocal.clone().normalize();
+    moveItem(dragging.item, newDir);
+    if (selectionHelper) selectionHelper.update();
+  } else if (dragging.type === 'handle') {
+    const handle = dragging.handle;
+    const waterItem = handle.userData.waterItem;
+    const idx = handle.userData.handleIndex;
+    computeWaterLocalBasis(waterItem, _hdLocalX, _hdLocalZ, _hdTerrainUp);
+    _hdFromCenter.copy(_itemLocal).sub(waterItem.pos).projectOnPlane(_hdTerrainUp);
+    const x = _hdFromCenter.dot(_hdLocalX) / waterItem.scale;
+    const z = _hdFromCenter.dot(_hdLocalZ) / waterItem.scale;
+    moveWaterEdgePoint(waterItem, idx, x, z);
+    if (selectionHelper) selectionHelper.update();
+  }
 }
 
 function handleCanvasPointerUp(e) {
@@ -1641,6 +1878,9 @@ function animate() {
     star.position.copy(_intendedPos);
     star.forward.applyAxisAngle(_moveAxis, angle);
   }
+
+  // Water current (gentle drift while inside any pond)
+  applyWaterPush(dt);
 
   // Glue Star to the surface (sinking into water if she's standing on it)
   settleStarOnSurface(star.position);
