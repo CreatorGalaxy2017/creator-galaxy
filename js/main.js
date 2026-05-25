@@ -2103,10 +2103,7 @@ const KEY_MAP = {
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') {
     e.preventDefault();
-    if (!star.airborne) {
-      star.verticalVel = STAR_JUMP_VEL;
-      star.airborne = true;
-    }
+    triggerJump();
     return;
   }
   const action = KEY_MAP[e.code];
@@ -2139,26 +2136,50 @@ document.querySelectorAll('.ctrl').forEach((btn) => {
   btn.addEventListener('pointerleave', release);
 });
 
+function triggerJump() {
+  if (!star.airborne) {
+    star.verticalVel = STAR_JUMP_VEL;
+    star.airborne = true;
+  }
+}
+
+const jumpBtn = document.querySelector('.jump-btn');
+if (jumpBtn) {
+  jumpBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    triggerJump();
+    jumpBtn.classList.add('is-pressed');
+    jumpBtn.setPointerCapture?.(e.pointerId);
+  });
+  const release = () => jumpBtn.classList.remove('is-pressed');
+  jumpBtn.addEventListener('pointerup', release);
+  jumpBtn.addEventListener('pointercancel', release);
+  jumpBtn.addEventListener('pointerleave', release);
+}
+
 document.addEventListener('pointerlockchange', () => {
   pointerLocked = document.pointerLockElement === canvas;
   document.body.classList.toggle('is-locked', pointerLocked);
 });
 
 const _mouseUp = new THREE.Vector3();
-document.addEventListener('mousemove', (e) => {
-  if (!pointerLocked) return;
-  const dx = e.movementX || 0;
-  const dy = e.movementY || 0;
 
-  // Mouse-X turns Star (and the camera follows because it derives from Star.forward)
+// Yaw + pitch from any input source (mouse-lock or touch drag).
+function applyLookDelta(dx, dy, sens) {
   _mouseUp.copy(star.position).normalize();
-  star.forward.applyAxisAngle(_mouseUp, -dx * MOUSE_SENS);
+  star.forward.applyAxisAngle(_mouseUp, -dx * sens);
   star.forward.projectOnPlane(_mouseUp).normalize();
 
-  // Mouse-Y tilts the camera only
-  camPitch -= dy * MOUSE_SENS;
+  camPitch -= dy * sens;
   if (camPitch < CAM_PITCH_MIN) camPitch = CAM_PITCH_MIN;
   if (camPitch > CAM_PITCH_MAX) camPitch = CAM_PITCH_MAX;
+}
+
+const TOUCH_LOOK_SENS = 0.004; // a bit hotter than mouse since swipes are bigger
+
+document.addEventListener('mousemove', (e) => {
+  if (!pointerLocked) return;
+  applyLookDelta(e.movementX || 0, e.movementY || 0, MOUSE_SENS);
 });
 
 // =============================================================================
@@ -2336,8 +2357,10 @@ function handleCanvasPointerDown(e) {
     x: e.clientX,
     y: e.clientY,
     pointerId: e.pointerId,
+    pointerType: e.pointerType,
     moved: false,
     itemPicked: null,
+    touchLook: false,
   };
 
   if (editMode) {
@@ -2358,7 +2381,15 @@ function handleCanvasPointerDown(e) {
         canvas.setPointerCapture?.(e.pointerId);
       }
     }
+    // In edit mode with no item hit, pointerup will deselect / place.
+  } else if (e.pointerType !== 'mouse') {
+    // Walk mode + touch/pen: drag the screen to look around (pointer-lock
+    // is mouse-only, so we use a delta-driven path instead).
+    pointerDownInfo.touchLook = true;
+    canvas.setPointerCapture?.(e.pointerId);
   }
+  // Walk mode + mouse: pointerup will request pointer lock if the click
+  // didn't drift far enough to count as a drag.
 }
 
 const _hdLocalX = new THREE.Vector3();
@@ -2372,6 +2403,15 @@ function handleCanvasPointerMove(e) {
   const dx = e.clientX - pointerDownInfo.x;
   const dy = e.clientY - pointerDownInfo.y;
   if (dx * dx + dy * dy > DRAG_THRESHOLD_SQ) pointerDownInfo.moved = true;
+
+  if (pointerDownInfo.touchLook && e.pointerId === pointerDownInfo.pointerId) {
+    const ddx = e.clientX - pointerDownInfo.x;
+    const ddy = e.clientY - pointerDownInfo.y;
+    pointerDownInfo.x = e.clientX;
+    pointerDownInfo.y = e.clientY;
+    applyLookDelta(ddx, ddy, TOUCH_LOOK_SENS);
+    return;
+  }
 
   if (!dragging) return;
 
@@ -2403,6 +2443,12 @@ function handleCanvasPointerMove(e) {
 function handleCanvasPointerUp(e) {
   if (!pointerDownInfo) return;
 
+  if (pointerDownInfo.touchLook) {
+    canvas.releasePointerCapture?.(e.pointerId);
+    pointerDownInfo = null;
+    return;
+  }
+
   if (dragging) {
     dragging = null;
     canvas.releasePointerCapture?.(e.pointerId);
@@ -2424,7 +2470,7 @@ function handleCanvasPointerUp(e) {
         // Clicked empty space (planet or background) with no tool — deselect
         setSelectedItem(null);
       }
-    } else {
+    } else if (pointerDownInfo.pointerType === 'mouse') {
       if (!pointerLocked) canvas.requestPointerLock?.();
     }
   }

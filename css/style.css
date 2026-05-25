@@ -16,6 +16,7 @@ html, body {
   position: fixed;
   inset: 0;
   cursor: crosshair;
+  touch-action: none;
 }
 
 body.is-locked #game-canvas {
@@ -675,10 +676,49 @@ body.is-locked .hint {
 .ctrl-right { grid-column: 3; grid-row: 2; }
 .ctrl-down  { grid-column: 2; grid-row: 3; }
 
+/* ------- Jump button ------- */
+.jump-btn {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 1.5rem;
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  background: rgba(255, 230, 120, 0.15);
+  border: 1px solid rgba(255, 230, 120, 0.55);
+  color: rgba(255, 240, 180, 0.95);
+  font-family: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+  user-select: none;
+  z-index: 10;
+  transition: background 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+  box-shadow: 0 0 0 0 rgba(255, 230, 120, 0);
+}
+
+.jump-btn:hover {
+  background: rgba(255, 230, 120, 0.24);
+}
+
+.jump-btn:active,
+.jump-btn.is-pressed {
+  background: rgba(255, 230, 120, 0.42);
+  transform: scale(0.93);
+  box-shadow: 0 0 18px 2px rgba(255, 230, 120, 0.45);
+}
+
 /* When the sidebar is open on desktop, push the D-pad left so it doesn't overlap */
 body.edit-mode .controls {
   right: 17rem;
 }
+
+/* Hide jump while pointer-lock is engaged (mouse mode, immersive look) */
+body.is-locked .jump-btn { opacity: 0.35; }
 
 .hint {
   position: fixed;
@@ -710,6 +750,7 @@ body.edit-mode .controls {
   .sidebar-coming { display: none; }
 
   body.edit-mode .controls { right: 1rem; bottom: 14rem; }
+  body.edit-mode .jump-btn { bottom: 14rem; }
 
   .controls {
     bottom: 1rem;
@@ -717,6 +758,15 @@ body.edit-mode .controls {
     grid-template-columns: repeat(3, 64px);
     grid-template-rows: repeat(3, 64px);
   }
+
+  .jump-btn {
+    bottom: 1rem;
+    left: 1rem;
+    width: 84px;
+    height: 84px;
+    font-size: 0.85rem;
+  }
+
   .hint {
     display: none;
   }
