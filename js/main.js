@@ -92,9 +92,126 @@ function buildMountainPlanet({ radius = 1.2, detail = 4, amplitude = 0.2 } = {})
   return new THREE.Mesh(geo, mat);
 }
 
-const planet = buildMountainPlanet({ radius: 1.2, detail: 4, amplitude: 0.2 });
+const PLANET_RADIUS = 1.2;
+const PLANET_AMPLITUDE = 0.2;
+const planet = buildMountainPlanet({ radius: PLANET_RADIUS, detail: 4, amplitude: PLANET_AMPLITUDE });
 planet.rotation.x = 0.35;
 scene.add(planet);
+
+function createStarTheFox() {
+  const fox = new THREE.Group();
+
+  const FUR_ORANGE = 0xe8732c;
+  const FUR_WHITE = 0xfaf2e6;
+  const SUIT_WHITE = 0xdce4f0;
+  const SUIT_ACCENT = 0xff9a3c;
+  const EYE_BLACK = 0x121212;
+  const HELMET_TINT = 0xaaccff;
+
+  const furOrange = new THREE.MeshStandardMaterial({ color: FUR_ORANGE, flatShading: true, roughness: 0.85 });
+  const furWhite = new THREE.MeshStandardMaterial({ color: FUR_WHITE, flatShading: true, roughness: 0.85 });
+  const suit = new THREE.MeshStandardMaterial({ color: SUIT_WHITE, flatShading: true, roughness: 0.65 });
+
+  const bodyGeo = new THREE.SphereGeometry(0.09, 12, 10);
+  bodyGeo.scale(1, 1.25, 0.85);
+  const body = new THREE.Mesh(bodyGeo, suit);
+  body.position.y = 0.11;
+  fox.add(body);
+
+  const chest = new THREE.Mesh(
+    new THREE.BoxGeometry(0.06, 0.04, 0.02),
+    new THREE.MeshStandardMaterial({ color: SUIT_ACCENT, flatShading: true })
+  );
+  chest.position.set(0, 0.13, 0.075);
+  fox.add(chest);
+
+  const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.09, 1), furOrange);
+  head.position.y = 0.255;
+  fox.add(head);
+
+  const snout = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.08, 6), furWhite);
+  snout.position.set(0, 0.24, 0.085);
+  snout.rotation.x = Math.PI / 2;
+  fox.add(snout);
+
+  const noseTip = new THREE.Mesh(new THREE.SphereGeometry(0.012, 8, 6),
+    new THREE.MeshStandardMaterial({ color: EYE_BLACK }));
+  noseTip.position.set(0, 0.24, 0.125);
+  fox.add(noseTip);
+
+  const earGeo = new THREE.ConeGeometry(0.032, 0.07, 4);
+  const earL = new THREE.Mesh(earGeo, furOrange);
+  const earR = new THREE.Mesh(earGeo, furOrange);
+  earL.position.set(-0.055, 0.335, -0.01);
+  earR.position.set(0.055, 0.335, -0.01);
+  earL.rotation.z = 0.22;
+  earR.rotation.z = -0.22;
+  fox.add(earL, earR);
+
+  const starShape = new THREE.Shape();
+  const STAR_PTS = 5;
+  const STAR_OUTER = 0.032;
+  const STAR_INNER = 0.014;
+  for (let i = 0; i <= STAR_PTS * 2; i++) {
+    const r = i % 2 === 0 ? STAR_OUTER : STAR_INNER;
+    const a = (i / (STAR_PTS * 2)) * Math.PI * 2 - Math.PI / 2;
+    const x = Math.cos(a) * r;
+    const y = Math.sin(a) * r;
+    if (i === 0) starShape.moveTo(x, y);
+    else starShape.lineTo(x, y);
+  }
+  const starMark = new THREE.Mesh(
+    new THREE.ShapeGeometry(starShape),
+    new THREE.MeshStandardMaterial({ color: FUR_WHITE, flatShading: true, side: THREE.DoubleSide })
+  );
+  starMark.position.set(0.04, 0.27, 0.078);
+  starMark.lookAt(0.04, 0.27, 1);
+  fox.add(starMark);
+
+  const eyeMat = new THREE.MeshStandardMaterial({ color: EYE_BLACK });
+  const eyeGeo = new THREE.SphereGeometry(0.012, 8, 6);
+  const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+  const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
+  eyeL.position.set(-0.04, 0.27, 0.082);
+  eyeR.position.set(0.04, 0.27, 0.088);
+  fox.add(eyeL, eyeR);
+
+  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.16, 6), furOrange);
+  tail.position.set(0, 0.12, -0.105);
+  tail.rotation.x = -0.55;
+  fox.add(tail);
+
+  const tailTip = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), furWhite);
+  tailTip.position.set(0, 0.04, -0.17);
+  fox.add(tailTip);
+
+  const backpack = new THREE.Mesh(
+    new THREE.BoxGeometry(0.08, 0.1, 0.04),
+    new THREE.MeshStandardMaterial({ color: 0xc8d2e0, flatShading: true })
+  );
+  backpack.position.set(0, 0.13, -0.08);
+  fox.add(backpack);
+
+  const helmet = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.125, 2),
+    new THREE.MeshStandardMaterial({
+      color: HELMET_TINT,
+      transparent: true,
+      opacity: 0.22,
+      roughness: 0.1,
+      metalness: 0.4,
+    })
+  );
+  helmet.position.y = 0.265;
+  helmet.renderOrder = 1;
+  fox.add(helmet);
+
+  return fox;
+}
+
+const starTheFox = createStarTheFox();
+starTheFox.position.set(0, PLANET_RADIUS + PLANET_AMPLITUDE + 0.02, 0);
+planet.add(starTheFox);
 
 function onResize() {
   const width = window.innerWidth;

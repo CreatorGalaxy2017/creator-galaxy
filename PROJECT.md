@@ -31,15 +31,19 @@ A small mountain planet covered in trees. Star can stand on it and walk around i
 - **Low-poly mountain planet** built from a subdivided icosahedron, vertex-displaced with layered 3D noise, flat-shaded for that *Alba*-style faceted look
 - Per-face biome colors: warm meadow green → grass → foothill brown → pale stone peaks
 - Slight axial tilt and slow rotation so the terrain is clearly turning
+- **Star the Fox** built procedurally from low-poly primitives — orange body in a soft-white space suit, white snout & tail tip, perky ears, white 5-point star marking around her right eye, dark nose, oxygen backpack, and a tinted glass helmet
+- Star is parented to the planet at its north pole, so she rides around with the world as it spins
 - Three-light setup: cool ambient + warm directional "sun" + cool rim light
 - Window resize handling and animation loop
 
 ## Next milestone
 
-Bring **Star the Fox** onto the mountain planet:
-1. Low-poly fox mesh (orange/white fur, white star around right eye, simple space suit + helmet, tail out)
-2. Place Star on the planet surface with her "up" vector aligned to the planet's surface normal
-3. Tumbling camera that follows Star around the sphere
-4. Basic walk controls (keyboard / on-screen) so Star can move across the curved terrain
+Make Star actually live on the planet:
+1. ✅ Mountain planet terrain
+2. ✅ Star the Fox character mesh
+3. ✅ Place Star on the surface (parented to planet)
+4. ⬜ Tumbling camera that orbits with Star (so we don't lose her behind the planet)
+5. ⬜ Basic walk controls (keyboard / touch) so Star can move across the curved terrain
+6. ⬜ Scatter low-poly trees in the foothills
 
-After that: scatter a few low-poly trees, then start on the first creature (Hoppa).
+After that: start on the first creature (Hoppa) and the planet customizer.
