@@ -377,14 +377,27 @@ const _right = new THREE.Vector3();
 const _basis = new THREE.Matrix4();
 const _stUp = new THREE.Vector3();
 const _stTerrainUp = new THREE.Vector3();
+const _stTempFwd = new THREE.Vector3();
+const _stBaseQuat = new THREE.Quaternion();
+const _stLeanQuat = new THREE.Quaternion();
 
+// Star's storage frame stays anchored to the radial (sphere) up so mouse-look
+// yaw and keyboard turn read out cleanly. We compute the visual terrain-lean
+// as a separate quaternion that we post-multiply, without mutating star.forward.
 function applyStarTransform() {
   _stUp.copy(star.position).normalize();
+
+  // Base orientation: radial up + sphere-tangent forward (does not mutate star.forward)
+  _stTempFwd.copy(star.forward).projectOnPlane(_stUp).normalize();
+  _right.crossVectors(_stUp, _stTempFwd).normalize();
+  _basis.makeBasis(_right, _stUp, _stTempFwd);
+  _stBaseQuat.setFromRotationMatrix(_basis);
+
+  // Visual lean: rotate from radial up to terrain up
   computeTerrainNormal(_stUp, _stTerrainUp);
-  star.forward.projectOnPlane(_stTerrainUp).normalize();
-  _right.crossVectors(_stTerrainUp, star.forward).normalize();
-  _basis.makeBasis(_right, _stTerrainUp, star.forward);
-  starTheFox.quaternion.setFromRotationMatrix(_basis);
+  _stLeanQuat.setFromUnitVectors(_stUp, _stTerrainUp);
+
+  starTheFox.quaternion.multiplyQuaternions(_stLeanQuat, _stBaseQuat);
   starTheFox.position.copy(star.position);
 }
 applyStarTransform();
@@ -784,8 +797,8 @@ function pickAtMouse(e) {
   return null;
 }
 
-function handleCanvasPointerDown(e) {
-  if (e.button !== 0) return;
+function handleCanvasClick(e) {
+  if (e.button !== undefined && e.button !== 0) return;
 
   if (editMode) {
     const pick = pickAtMouse(e);
@@ -809,7 +822,7 @@ function handleCanvasPointerDown(e) {
   }
 }
 
-canvas.addEventListener('pointerdown', handleCanvasPointerDown);
+canvas.addEventListener('click', handleCanvasClick);
 
 document.querySelector('.edit-toggle')?.addEventListener('click', () => {
   setEditMode(!editMode);
