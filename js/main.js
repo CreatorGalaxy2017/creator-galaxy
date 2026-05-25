@@ -6,7 +6,7 @@ import * as THREE from 'three';
 
 const PLANET_RADIUS = 80;
 const PLANET_AMPLITUDE = 13;
-const SURFACE_OFFSET = 0.02;
+const SURFACE_OFFSET = 0.04;
 const SURFACE_MAX_R = PLANET_RADIUS + PLANET_AMPLITUDE + SURFACE_OFFSET;
 const PLANET_DETAIL = 6;
 const PLANET_TILT = 0.35;
@@ -1436,32 +1436,40 @@ function resolveCollisions(targetPos) {
   }
 }
 
-const STAR_WADE_DEPTH = 0.18;
 const _settleDir = new THREE.Vector3();
 
-// Adjust Star's radial height: surface normally, surface - WADE_DEPTH inside
-// any 'submerge' item (uses the pond polygon, so stream-shaped ponds work).
+// Adjust Star's radial height each frame:
+// - On ground: sit at the noise surface + SURFACE_OFFSET
+// - In a pond: sit AT the water surface (no submerging into the planet mesh)
+// Also sets star.inWater for the animation loop to switch to swim-cycle.
 function settleStarOnSurface(starPos) {
   const dir = _settleDir.copy(starPos).normalize();
-  let depthOffset = 0;
 
+  let waterItem = null;
   for (const item of placedItems) {
     const def = ITEM_TYPES[item.type];
     if (def.collisionType !== 'submerge') continue;
     if (!item.edgePoints) continue;
-    // Cheap distance prefilter — pond can't reach further than its max edge
     const dx = starPos.x - item.pos.x;
     const dy = starPos.y - item.pos.y;
     const dz = starPos.z - item.pos.z;
     const maxR = (item.maxEdgeRadius || 0.3) * item.scale + 0.1;
     if (dx * dx + dy * dy + dz * dz > maxR * maxR) continue;
     if (starInWater(item)) {
-      depthOffset = STAR_WADE_DEPTH;
+      waterItem = item;
       break;
     }
   }
+  star.inWater = !!waterItem;
 
-  starPos.copy(dir).multiplyScalar(surfaceHeightAt(dir) - depthOffset);
+  const surfaceR = surfaceHeightAt(dir); // already includes SURFACE_OFFSET
+  if (waterItem) {
+    // Place Star on top of the pond disk (disk sits at noise + 0.005*scale).
+    // Net: she swims on the water surface, body above the planet mesh.
+    starPos.copy(dir).multiplyScalar(surfaceR - SURFACE_OFFSET + 0.005 * waterItem.scale);
+  } else {
+    starPos.copy(dir).multiplyScalar(surfaceR);
+  }
 }
 
 // Cache the largest edgePoint distance per item so the prefilter above can
@@ -1973,31 +1981,30 @@ function updateAquaticAI(item, dt, t) {
     setItemFacing(item, ai.facingDir);
   }
 
-  // Dive bob — body group oscillates up/down and pitches forward/back
-  ai.divePhase += dt * 0.9;
-
-  // Breach trigger: every 8-20s, launch a bigger jump arc that takes the
-  // creature clearly above the water surface before splashing back down.
+  // Aquatic body sits at a constant underwater depth (no constant up/down
+  // bob). Every 8-22s a parabolic breach arc launches the body clearly
+  // above the water surface and splashes back down.
   ai.breachIn -= dt;
   if (ai.breachIn <= 0 && ai.breachT <= 0) {
-    ai.breachT = 1.1;             // length of the jump in seconds
+    ai.breachT = 1.1;
     ai.breachIn = 8 + Math.random() * 14;
   }
   let breachOffset = 0;
   let breachPitch = 0;
   if (ai.breachT > 0) {
     ai.breachT -= dt;
-    const u = Math.max(0, Math.min(1, 1 - ai.breachT / 1.1)); // 0->1 over arc
-    const arc = 4 * u * (1 - u);                              // parabola peak 1
-    breachOffset = arc * 0.55;                                // peak ~half a unit
-    // Pitch up on the way up, level near apex, down on the way down
+    const u = Math.max(0, Math.min(1, 1 - ai.breachT / 1.1));
+    const arc = 4 * u * (1 - u);
+    breachOffset = arc * 0.55;
     breachPitch = -Math.cos(u * Math.PI) * 0.55;
   }
 
   const parts = item.root.userData.parts;
   if (parts && parts.bodyGroup) {
-    parts.bodyGroup.position.y = Math.sin(ai.divePhase) * 0.16 + breachOffset;
-    parts.bodyGroup.rotation.x = Math.cos(ai.divePhase) * 0.35 + breachPitch;
+    // -0.10 = body group offset that puts the body underwater normally.
+    // Breach lifts it above the pond surface.
+    parts.bodyGroup.position.y = -0.10 + breachOffset;
+    parts.bodyGroup.rotation.x = breachPitch;
   }
 }
 
@@ -2712,32 +2719,47 @@ function animate() {
   const moving = move !== 0;
   const walkAmt = moving ? 1 : 0;
 
-  if (moving) {
-    star.walkPhase += dt * WALK_CYCLE_FREQ * Math.PI * 2;
-  }
-
-  const swing = Math.sin(star.walkPhase) * 0.55 * walkAmt;
-  fx.legs.fl.rotation.x = swing;
-  fx.legs.br.rotation.x = swing;
-  fx.legs.fr.rotation.x = -swing;
-  fx.legs.bl.rotation.x = -swing;
-
-  // Body sway: roll side to side, twice per stride
-  fx.bodyGroup.rotation.z = Math.sin(star.walkPhase * 2) * 0.045 * walkAmt;
-  // Subtle vertical bob via slight body Y nudge
-  fx.bodyGroup.position.y = 0.05 + Math.sin(star.walkPhase * 2 + RETICLE_PHASE_TWO) * 0.008 * walkAmt;
-
-  // Tail: swish when walking, gentle drift when idle
-  fx.tailRoot.rotation.y = moving
-    ? Math.sin(star.walkPhase) * 0.5
-    : Math.sin(t * 1.2) * 0.08;
-
-  // Idle breathing: gentle scale-Y oscillation, only when not walking
-  if (moving) {
+  if (star.inWater) {
+    // Swim cycle: paddle all 4 legs, anti-phase per side. Body upright
+    // (no breathing / sway). Tail trails behind.
+    star.walkPhase += dt * 6;
+    const swim = Math.sin(star.walkPhase);
+    fx.legs.fl.rotation.x = -1.0 + swim * 0.5;
+    fx.legs.fr.rotation.x = -1.0 - swim * 0.5;
+    fx.legs.bl.rotation.x =  0.75 + swim * 0.4;
+    fx.legs.br.rotation.x =  0.75 - swim * 0.4;
+    fx.tailRoot.rotation.y = Math.sin(star.walkPhase * 0.6) * 0.4;
+    fx.bodyGroup.rotation.z = 0;
+    fx.bodyGroup.position.y = 0.05;
     fx.bodyGroup.scale.set(1, 1, 1);
   } else {
-    const breath = 1 + Math.sin(t * IDLE_BREATH_FREQ * Math.PI * 2) * 0.03;
-    fx.bodyGroup.scale.set(1, breath, 1);
+    if (moving) {
+      star.walkPhase += dt * WALK_CYCLE_FREQ * Math.PI * 2;
+    }
+
+    const swing = Math.sin(star.walkPhase) * 0.55 * walkAmt;
+    fx.legs.fl.rotation.x = swing;
+    fx.legs.br.rotation.x = swing;
+    fx.legs.fr.rotation.x = -swing;
+    fx.legs.bl.rotation.x = -swing;
+
+    // Body sway: roll side to side, twice per stride
+    fx.bodyGroup.rotation.z = Math.sin(star.walkPhase * 2) * 0.045 * walkAmt;
+    // Subtle vertical bob via slight body Y nudge
+    fx.bodyGroup.position.y = 0.05 + Math.sin(star.walkPhase * 2 + RETICLE_PHASE_TWO) * 0.008 * walkAmt;
+
+    // Tail: swish when walking, gentle drift when idle
+    fx.tailRoot.rotation.y = moving
+      ? Math.sin(star.walkPhase) * 0.5
+      : Math.sin(t * 1.2) * 0.08;
+
+    // Idle breathing: gentle scale-Y oscillation, only when not walking
+    if (moving) {
+      fx.bodyGroup.scale.set(1, 1, 1);
+    } else {
+      const breath = 1 + Math.sin(t * IDLE_BREATH_FREQ * Math.PI * 2) * 0.03;
+      fx.bodyGroup.scale.set(1, breath, 1);
+    }
   }
 
   updateCreatures(dt);
