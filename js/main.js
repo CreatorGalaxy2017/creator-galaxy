@@ -420,12 +420,16 @@ const canopyMat = new THREE.MeshStandardMaterial({
   color: 0x37642e, flatShading: true, roughness: 0.9,
 });
 
-const rockMat = new THREE.MeshStandardMaterial({
-  color: 0x807a72, flatShading: true, roughness: 0.95,
-});
-const bushMat = new THREE.MeshStandardMaterial({
-  color: 0x4a8035, flatShading: true, roughness: 0.85,
-});
+const rockMats = [
+  new THREE.MeshStandardMaterial({ color: 0x807a72, flatShading: true, roughness: 0.95 }),
+  new THREE.MeshStandardMaterial({ color: 0x6e6962, flatShading: true, roughness: 0.95 }),
+  new THREE.MeshStandardMaterial({ color: 0x968f85, flatShading: true, roughness: 0.95 }),
+];
+const bushMats = [
+  new THREE.MeshStandardMaterial({ color: 0x4e8a36, flatShading: true, roughness: 0.85 }),
+  new THREE.MeshStandardMaterial({ color: 0x5fa346, flatShading: true, roughness: 0.85 }),
+  new THREE.MeshStandardMaterial({ color: 0x3e6f2a, flatShading: true, roughness: 0.85 }),
+];
 const mushroomCapMat = new THREE.MeshStandardMaterial({
   color: 0xc0392b, flatShading: true, roughness: 0.7,
 });
@@ -436,16 +440,31 @@ const mushroomStemMat = new THREE.MeshStandardMaterial({
   color: 0xf2e3c4, flatShading: true, roughness: 0.8,
 });
 
-function jitterIco(geo, amount = 0.25) {
+// Builds a faceted irregular blob from an indexed sphere — jitter happens on
+// the SHARED vertices, so faces stay connected (no cracks). Then we convert
+// to non-indexed for flat shading and recompute normals.
+function makeBlobGeo(radius, widthSeg, heightSeg, jitterAmount) {
+  const geo = new THREE.SphereGeometry(radius, widthSeg, heightSeg);
   const pos = geo.attributes.position;
   const v = new THREE.Vector3();
   for (let i = 0; i < pos.count; i++) {
     v.fromBufferAttribute(pos, i);
-    v.multiplyScalar(1 - amount * 0.5 + Math.random() * amount);
+    v.multiplyScalar(1 - jitterAmount * 0.5 + Math.random() * jitterAmount);
     pos.setXYZ(i, v.x, v.y, v.z);
   }
+  const ni = geo.toNonIndexed();
+  ni.computeVertexNormals();
+  return ni;
+}
+
+// Flatten vertices below threshold so the blob sits on the ground.
+function flattenBottom(geo, threshold, factor) {
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i);
+    if (y < threshold) pos.setY(i, y * factor);
+  }
   geo.computeVertexNormals();
-  return geo;
 }
 
 function createTreeItem() {
@@ -457,29 +476,47 @@ function createTreeItem() {
 }
 
 function createRockItem() {
-  const geo = jitterIco(new THREE.IcosahedronGeometry(0.07, 0).toNonIndexed(), 0.45);
-  // Sit half-buried by translating up only slightly
-  geo.translate(0, 0.04, 0);
-  const rock = new THREE.Mesh(geo, rockMat);
-  rock.rotation.y = Math.random() * Math.PI * 2;
-  return rock;
+  const g = new THREE.Group();
+
+  const mainGeo = makeBlobGeo(0.085, 7, 5, 0.4);
+  flattenBottom(mainGeo, -0.015, 0.25);
+  const main = new THREE.Mesh(mainGeo, rockMats[Math.floor(Math.random() * 2)]);
+  main.position.y = 0.05;
+  main.rotation.y = Math.random() * Math.PI * 2;
+  g.add(main);
+
+  // Most rocks get a smaller buddy stone next to them
+  if (Math.random() < 0.7) {
+    const sGeo = makeBlobGeo(0.04, 6, 4, 0.45);
+    flattenBottom(sGeo, -0.01, 0.25);
+    const s = new THREE.Mesh(sGeo, rockMats[2]);
+    const a = Math.random() * Math.PI * 2;
+    s.position.set(Math.cos(a) * 0.075, 0.028, Math.sin(a) * 0.075);
+    s.rotation.y = Math.random() * Math.PI * 2;
+    g.add(s);
+  }
+
+  return g;
 }
 
 function createBushItem() {
   const g = new THREE.Group();
-  const main = new THREE.Mesh(
-    jitterIco(new THREE.IcosahedronGeometry(0.07, 1).toNonIndexed(), 0.3),
-    bushMat
-  );
-  main.position.y = 0.06;
-  g.add(main);
-  // A small secondary lump
-  const lump = new THREE.Mesh(
-    jitterIco(new THREE.IcosahedronGeometry(0.045, 1).toNonIndexed(), 0.3),
-    bushMat
-  );
-  lump.position.set(0.05, 0.04, 0.02);
-  g.add(lump);
+
+  const lumps = [
+    { x:  0.00, y: 0.075, z:  0.00, r: 0.075, mat: bushMats[0] },
+    { x:  0.055, y: 0.05,  z:  0.02, r: 0.055, mat: bushMats[1] },
+    { x: -0.045, y: 0.055, z: -0.03, r: 0.052, mat: bushMats[2] },
+    { x:  0.015, y: 0.095, z: -0.035, r: 0.043, mat: bushMats[1] },
+  ];
+  for (const l of lumps) {
+    const geo = makeBlobGeo(l.r, 7, 5, 0.22);
+    flattenBottom(geo, -l.r * 0.7, 0.45);
+    const m = new THREE.Mesh(geo, l.mat);
+    m.position.set(l.x, l.y, l.z);
+    m.rotation.y = Math.random() * Math.PI * 2;
+    g.add(m);
+  }
+
   return g;
 }
 
@@ -519,7 +556,9 @@ const placedItems = []; // { type, root, scale, dir, pos }
 const itemsGroup = new THREE.Group();
 planet.add(itemsGroup);
 
-function orientItemOnSurface(root, dir) {
+// Place an item on the planet at `dir` with the given yaw around the surface
+// normal. yaw is persisted on the item so dragging only changes position.
+function placeItemOnSurface(root, dir, yaw) {
   const surfaceR = surfaceHeightAt(dir);
   const pos = dir.clone().multiplyScalar(surfaceR);
 
@@ -528,7 +567,7 @@ function orientItemOnSurface(root, dir) {
 
   const ref = Math.abs(terrainUp.y) > 0.95 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
   const fwd = new THREE.Vector3().crossVectors(terrainUp, ref).normalize();
-  fwd.applyAxisAngle(terrainUp, Math.random() * Math.PI * 2);
+  fwd.applyAxisAngle(terrainUp, yaw);
   const right = new THREE.Vector3().crossVectors(terrainUp, fwd).normalize();
 
   const basis = new THREE.Matrix4().makeBasis(right, terrainUp, fwd);
@@ -545,13 +584,20 @@ function addItem(type, dir) {
   root.scale.setScalar(scale);
   root.userData.itemType = type;
   root.userData.isPlacedItem = true;
-  const pos = orientItemOnSurface(root, dir);
+  const yaw = Math.random() * Math.PI * 2;
+  const pos = placeItemOnSurface(root, dir, yaw);
   itemsGroup.add(root);
 
-  const item = { type, root, scale, dir: dir.clone(), pos: pos.clone() };
+  const item = { type, root, scale, dir: dir.clone(), pos: pos.clone(), yaw };
   root.userData.item = item;
   placedItems.push(item);
   return item;
+}
+
+function moveItem(item, newDir) {
+  const pos = placeItemOnSurface(item.root, newDir, item.yaw);
+  item.dir.copy(newDir);
+  item.pos.copy(pos);
 }
 
 function removeItem(item) {
@@ -578,6 +624,8 @@ function duplicateItem(item) {
   if (newItem) {
     newItem.scale = item.scale;
     newItem.root.scale.setScalar(item.scale);
+    newItem.yaw = item.yaw;
+    placeItemOnSurface(newItem.root, newDir, item.yaw);
   }
   return newItem;
 }
@@ -797,32 +845,97 @@ function pickAtMouse(e) {
   return null;
 }
 
-function handleCanvasClick(e) {
+// Pointer event flow:
+// - pointerdown captures intent. If editing and an item is under the cursor,
+//   we set selection and start a potential drag. Otherwise we record where
+//   the gesture started.
+// - pointermove: if dragging, raycast to the planet under the cursor and
+//   re-place the item there (yaw preserved, terrain orientation updated).
+// - pointerup: if not dragging, this was a click — perform place / deselect /
+//   pointer-lock based on edit mode and active tool.
+let dragging = null;
+let pointerDownInfo = null;
+const DRAG_THRESHOLD_SQ = 16; // ~4px movement before it's a drag
+
+function handleCanvasPointerDown(e) {
   if (e.button !== undefined && e.button !== 0) return;
 
-  if (editMode) {
+  pointerDownInfo = {
+    x: e.clientX,
+    y: e.clientY,
+    pointerId: e.pointerId,
+    moved: false,
+    itemPicked: null,
+  };
+
+  if (editMode && !activeTool) {
     const pick = pickAtMouse(e);
-    if (!pick) {
-      setSelectedItem(null);
-      return;
+    if (pick && pick.type === 'item') {
+      pointerDownInfo.itemPicked = pick.item;
+      setSelectedItem(pick.item);
+      dragging = pick.item;
+      canvas.setPointerCapture?.(e.pointerId);
     }
-    if (activeTool) {
-      if (pick.type === 'planet') {
-        _itemLocal.copy(pick.hit.point);
-        planet.worldToLocal(_itemLocal);
-        const dir = _itemLocal.clone().normalize();
-        addItem(activeTool, dir);
-      }
-    } else {
-      if (pick.type === 'item') setSelectedItem(pick.item);
-      else setSelectedItem(null);
-    }
-  } else {
-    if (!pointerLocked) canvas.requestPointerLock?.();
   }
 }
 
-canvas.addEventListener('click', handleCanvasClick);
+function handleCanvasPointerMove(e) {
+  if (!pointerDownInfo) return;
+
+  const dx = e.clientX - pointerDownInfo.x;
+  const dy = e.clientY - pointerDownInfo.y;
+  if (dx * dx + dy * dy > DRAG_THRESHOLD_SQ) pointerDownInfo.moved = true;
+
+  if (!dragging) return;
+
+  getMouseNDC(e, _ndc);
+  raycaster.setFromCamera(_ndc, camera);
+  const hits = raycaster.intersectObject(planet, false);
+  if (hits.length === 0) return;
+
+  _itemLocal.copy(hits[0].point);
+  planet.worldToLocal(_itemLocal);
+  const newDir = _itemLocal.clone().normalize();
+  moveItem(dragging, newDir);
+  if (selectionHelper) selectionHelper.update();
+}
+
+function handleCanvasPointerUp(e) {
+  if (!pointerDownInfo) return;
+
+  if (dragging) {
+    dragging = null;
+    canvas.releasePointerCapture?.(e.pointerId);
+    pointerDownInfo = null;
+    return;
+  }
+
+  if (!pointerDownInfo.moved) {
+    if (editMode) {
+      if (activeTool) {
+        const pick = pickAtMouse(e);
+        if (pick && pick.type === 'planet') {
+          _itemLocal.copy(pick.hit.point);
+          planet.worldToLocal(_itemLocal);
+          const dir = _itemLocal.clone().normalize();
+          addItem(activeTool, dir);
+        }
+      } else if (!pointerDownInfo.itemPicked) {
+        // Clicked empty space (planet or background) with no tool — deselect
+        setSelectedItem(null);
+      }
+    } else {
+      if (!pointerLocked) canvas.requestPointerLock?.();
+    }
+  }
+
+  pointerDownInfo = null;
+}
+
+canvas.addEventListener('pointerdown', handleCanvasPointerDown);
+canvas.addEventListener('pointermove', handleCanvasPointerMove);
+canvas.addEventListener('pointerup', handleCanvasPointerUp);
+canvas.addEventListener('pointercancel', handleCanvasPointerUp);
 
 document.querySelector('.edit-toggle')?.addEventListener('click', () => {
   setEditMode(!editMode);
