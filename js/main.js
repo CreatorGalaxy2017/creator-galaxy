@@ -2195,7 +2195,7 @@ function setActiveTool(toolKey) {
   const banner = document.querySelector('.placement-banner');
   if (banner) {
     if (toolKey) {
-      banner.textContent = `Click on the planet to place a ${ITEM_TYPES[toolKey].label.toLowerCase()}. Esc to cancel.`;
+      banner.textContent = `Click on the planet to place a ${ITEM_TYPES[toolKey].label.toLowerCase()}. Click an existing item to edit it. Esc to cancel.`;
       banner.classList.add('is-visible');
     } else {
       banner.classList.remove('is-visible');
@@ -2206,11 +2206,11 @@ function setActiveTool(toolKey) {
 const handleMat = new THREE.MeshStandardMaterial({
   color: 0xfff04d,
   emissive: 0xfff04d,
-  emissiveIntensity: 0.45,
-  roughness: 0.35,
-  metalness: 0.1,
+  emissiveIntensity: 0.7,
+  roughness: 0.3,
+  metalness: 0.15,
 });
-const handleGeo = new THREE.SphereGeometry(0.03, 10, 8);
+const handleGeo = new THREE.SphereGeometry(0.05, 12, 10);
 
 function showWaterHandles(item) {
   if (!item.edgePoints) return;
@@ -2218,7 +2218,7 @@ function showWaterHandles(item) {
   for (let i = 0; i < item.edgePoints.length; i++) {
     const ep = item.edgePoints[i];
     const h = new THREE.Mesh(handleGeo, handleMat);
-    h.position.set(ep.x, 0.02, ep.z);
+    h.position.set(ep.x, 0.04, ep.z);
     h.userData.isHandle = true;
     h.userData.waterItem = item;
     h.userData.handleIndex = i;
@@ -2268,7 +2268,7 @@ function updateWaterHandlePositions(item) {
   const children = item.handlesGroup.children;
   for (let i = 0; i < item.edgePoints.length && i < children.length; i++) {
     const ep = item.edgePoints[i];
-    children[i].position.set(ep.x, 0.02, ep.z);
+    children[i].position.set(ep.x, 0.04, ep.z);
   }
 }
 
@@ -2280,7 +2280,7 @@ function moveWaterEdgePoint(item, idx, x, z) {
   // the handle visual.
   updateWaterMaxRadius(item);
   if (item.handlesGroup) {
-    item.handlesGroup.children[idx]?.position.set(x, 0.02, z);
+    item.handlesGroup.children[idx]?.position.set(x, 0.04, z);
   }
 }
 
@@ -2340,7 +2340,7 @@ function handleCanvasPointerDown(e) {
     itemPicked: null,
   };
 
-  if (editMode && !activeTool) {
+  if (editMode) {
     const pick = pickAtMouse(e);
     if (pick) {
       if (pick.type === 'handle') {
@@ -2348,6 +2348,10 @@ function handleCanvasPointerDown(e) {
         dragging = { type: 'handle', handle: pick.handle };
         canvas.setPointerCapture?.(e.pointerId);
       } else if (pick.type === 'item') {
+        // Clicking an existing item ALWAYS selects it — even if a placement
+        // tool was active. The active tool gets implicitly cancelled so the
+        // user can immediately drag handles, resize, etc.
+        if (activeTool) setActiveTool(null);
         pointerDownInfo.itemPicked = pick.item;
         setSelectedItem(pick.item);
         dragging = { type: 'item', item: pick.item };
