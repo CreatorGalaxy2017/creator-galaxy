@@ -35,18 +35,29 @@ A small mountain planet covered in trees. Star can stand on it and walk around i
 - **Walk controls** — Arrow keys / WASD on desktop, on-screen D-pad on touch. Star turns and walks along great circles on the planet
 - **Tumbling follow camera** — sits behind and above Star with its up vector locked to the surface normal, so as she walks around the sphere the world appears to tumble beneath her
 - Subtle walk bob when moving
+- **Low-poly conifer trees** scattered across the foothill / grass biomes — instanced trunks + two-tier canopies, random rotation and scale, sampled at the same noise as the terrain so they sit on the right elevation band
 - Background starfield for spatial reference
 - Three-light setup: cool ambient + warm directional "sun" + cool rim light
 - Window resize handling and animation loop
 
-## Next milestone
+## Milestone — *Star walks her home planet* (done!)
 
-Make Star actually live on the planet:
 1. ✅ Mountain planet terrain
 2. ✅ Star the Fox character mesh
 3. ✅ Place Star on the surface (parented to planet)
 4. ✅ Tumbling camera that orbits with Star
 5. ✅ Basic walk controls (keyboard + touch)
-6. ⬜ Scatter low-poly trees in the foothills
+6. ✅ Scatter low-poly trees in the foothills
 
-After that: start on the first creature (Hoppa) and the planet customizer.
+## Next milestone — *Life on the planet*
+
+1. ⬜ **Hoppa** the bouncy yellow blob — first creature, lives in meadow biomes
+2. ⬜ Idle animations (Hoppa hops, Star's tail flicks, trees sway gently)
+3. ⬜ Star can "pet" / interact with Hoppa when close
+4. ⬜ A small UI hint when Star is near something interactive
+
+## Bigger arcs ahead
+
+- **Planet customizer** — pick biomes, terrain shape, drop trees & creatures, save the layout
+- **Galaxy map** — visit other planets (other player saves, or built-in ones)
+- **More creatures and biomes** beyond Hoppa

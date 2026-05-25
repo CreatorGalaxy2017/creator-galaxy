@@ -212,6 +212,84 @@ function createStarTheFox() {
 const starTheFox = createStarTheFox();
 planet.add(starTheFox);
 
+function scatterTrees(count = 80) {
+  const trunkGeo = new THREE.CylinderGeometry(0.013, 0.018, 0.08, 5);
+  trunkGeo.translate(0, 0.04, 0);
+  const trunkMat = new THREE.MeshStandardMaterial({
+    color: 0x6b3f24, flatShading: true, roughness: 0.95,
+  });
+
+  const canopyLowerGeo = new THREE.ConeGeometry(0.07, 0.11, 6);
+  canopyLowerGeo.translate(0, 0.115, 0);
+
+  const canopyUpperGeo = new THREE.ConeGeometry(0.05, 0.08, 6);
+  canopyUpperGeo.translate(0, 0.17, 0);
+
+  const canopyMat = new THREE.MeshStandardMaterial({
+    color: 0x37642e, flatShading: true, roughness: 0.9,
+  });
+
+  const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, count);
+  const canopyLower = new THREE.InstancedMesh(canopyLowerGeo, canopyMat, count);
+  const canopyUpper = new THREE.InstancedMesh(canopyUpperGeo, canopyMat, count);
+
+  const matrix = new THREE.Matrix4();
+  const scaleMat = new THREE.Matrix4();
+  const dir = new THREE.Vector3();
+  const up = new THREE.Vector3();
+  const fwd = new THREE.Vector3();
+  const right = new THREE.Vector3();
+  const ref = new THREE.Vector3();
+
+  let placed = 0;
+  const MAX_ATTEMPTS = count * 14;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS && placed < count; attempt++) {
+    const u = Math.random() * 2 - 1;
+    const theta = Math.random() * Math.PI * 2;
+    const sinPhi = Math.sqrt(Math.max(0, 1 - u * u));
+    dir.set(sinPhi * Math.cos(theta), u, sinPhi * Math.sin(theta));
+
+    if (dir.y > 0.92) continue;
+
+    const h = noise3D(dir.x * 2.4, dir.y * 2.4, dir.z * 2.4);
+    if (h < -0.05 || h > 0.28) continue;
+
+    const r = PLANET_RADIUS + h * PLANET_AMPLITUDE;
+
+    up.copy(dir);
+    ref.set(0, 1, 0);
+    if (Math.abs(up.y) > 0.95) ref.set(1, 0, 0);
+    fwd.crossVectors(up, ref).normalize().applyAxisAngle(up, Math.random() * Math.PI * 2);
+    right.crossVectors(up, fwd).normalize();
+
+    matrix.makeBasis(right, up, fwd);
+    matrix.setPosition(dir.x * r, dir.y * r, dir.z * r);
+
+    const s = 0.7 + Math.random() * 0.8;
+    scaleMat.makeScale(s, s, s);
+    matrix.multiply(scaleMat);
+
+    trunks.setMatrixAt(placed, matrix);
+    canopyLower.setMatrixAt(placed, matrix);
+    canopyUpper.setMatrixAt(placed, matrix);
+    placed++;
+  }
+
+  trunks.count = placed;
+  canopyLower.count = placed;
+  canopyUpper.count = placed;
+  trunks.instanceMatrix.needsUpdate = true;
+  canopyLower.instanceMatrix.needsUpdate = true;
+  canopyUpper.instanceMatrix.needsUpdate = true;
+
+  const group = new THREE.Group();
+  group.add(trunks, canopyLower, canopyUpper);
+  return group;
+}
+
+planet.add(scatterTrees(85));
+
 const SURFACE_RADIUS = PLANET_RADIUS + PLANET_AMPLITUDE + 0.02;
 
 const star = {
