@@ -1,0 +1,43 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: #000;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+#game-canvas {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  position: fixed;
+  inset: 0;
+}
+
+.title {
+  position: fixed;
+  top: 1.25rem;
+  left: 1.5rem;
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.88);
+  text-shadow: 0 0 12px rgba(255, 255, 255, 0.15);
+  pointer-events: none;
+  user-select: none;
+  z-index: 10;
+}
+
+@media (max-width: 480px) {
+  .title {
+    top: 0.9rem;
+    left: 1rem;
+    font-size: 0.95rem;
+    letter-spacing: 0.15em;
+  }
+}
