@@ -71,6 +71,57 @@ const rimLight = new THREE.DirectionalLight(0x88a0ff, 0.32);
 rimLight.position.set(-120, -60, -90);
 scene.add(rimLight);
 
+// Day/night cycle — full revolution every 10 minutes.
+const DAY_NIGHT_PERIOD = 600; // seconds
+const _dnSunDir = new THREE.Vector3();
+const _dnBgColor = new THREE.Color();
+
+function updateDayNight(elapsedTime) {
+  const phase = (elapsedTime % DAY_NIGHT_PERIOD) / DAY_NIGHT_PERIOD;
+  const angle = phase * Math.PI * 2;
+  // Sun orbits the planet; sunHeight=1 is noon, -1 is midnight.
+  const sunHeight = Math.cos(angle);
+  _dnSunDir.set(Math.sin(angle), sunHeight, 0.45).normalize();
+  sun.position.copy(_dnSunDir).multiplyScalar(260);
+
+  // Day factor: 0 at night, 1 at noon. Smooth twilight band near horizon.
+  const dayFactor = Math.max(0, sunHeight);
+  const horizonFactor = Math.max(0, 1 - Math.abs(sunHeight) * 3); // peaks near sunHeight=0
+
+  sun.intensity = 0.04 + dayFactor * 1.35;
+  ambient.intensity = 0.22 + dayFactor * 0.55;
+  rimLight.intensity = 0.10 + dayFactor * 0.30;
+
+  // Warm sunrise/sunset tint near the horizon, cool blue at night, bright at noon
+  if (sunHeight > 0.35) {
+    sun.color.setHex(0xfff1d6);
+  } else if (sunHeight > 0) {
+    const u = sunHeight / 0.35;          // 0 at horizon, 1 at "high enough"
+    sun.color.setRGB(1.0, 0.55 + u * 0.4, 0.30 + u * 0.55);
+  } else {
+    sun.color.setHex(0x4a6699);
+  }
+
+  if (dayFactor > 0.3) {
+    ambient.color.setHex(0xb8c8ff);
+  } else if (sunHeight > -0.2) {
+    // Twilight tint blends through warm/cool
+    const u = (sunHeight + 0.2) / 0.5;
+    ambient.color.setRGB(0.40 + u * 0.32, 0.40 + u * 0.38, 0.55 + u * 0.45);
+  } else {
+    ambient.color.setHex(0x2a3050);
+  }
+
+  // Scene background fades from black (night) to soft blue-grey (noon),
+  // with a warm wash during sunrise/sunset.
+  const bgNight = 0.02;
+  const bgDay = 0.10;
+  const bg = bgNight + dayFactor * (bgDay - bgNight);
+  _dnBgColor.setRGB(bg * 0.55 + horizonFactor * 0.10, bg * 0.65 + horizonFactor * 0.06, bg * 0.85);
+  scene.background.copy(_dnBgColor);
+  if (scene.fog) scene.fog.color.copy(_dnBgColor);
+}
+
 // =============================================================================
 // Noise (terrain + tree clumping)
 // =============================================================================
@@ -574,13 +625,14 @@ function createMushroomItem() {
 }
 
 const waterMat = new THREE.MeshStandardMaterial({
-  color: 0x3a8bd6,
+  color: 0x123e6a,        // deep ocean blue
   transparent: true,
-  opacity: 0.78,
-  roughness: 0.12,
-  metalness: 0.45,
+  opacity: 0.92,          // mostly opaque so planet floor is hidden
+  roughness: 0.1,
+  metalness: 0.55,
   flatShading: false,
   side: THREE.DoubleSide,
+  depthWrite: false,      // so sharks (rendered later) can pass depth test against planet
 });
 
 const WATER_EDGE_COUNT = 12;
@@ -641,6 +693,14 @@ function createWaterItem() {
   return g;
 }
 
+// Edge vertices of the pond polygon bend DOWN (in pond-local Y) so the disk
+// follows the planet's curvature rather than extending tangent-flat into space.
+// World drop ≈ r² / (2R); divide by item.scale to convert to pond-local.
+function waterEdgeCurveY(item, px, pz) {
+  const r2 = px * px + pz * pz;
+  return -(r2 * item.scale) / (2 * PLANET_RADIUS);
+}
+
 function animateWater(t) {
   for (const item of placedItems) {
     if (item.type !== 'water') continue;
@@ -654,8 +714,9 @@ function animateWater(t) {
     for (let i = 0; i < item.edgePoints.length; i++) {
       const p = item.edgePoints[i];
       const offset = (i + 1) * 3;
+      const curveY = waterEdgeCurveY(item, p.x, p.z);
       arr[offset] = p.x;
-      arr[offset + 1] = WATER_BASE_Y +
+      arr[offset + 1] = WATER_BASE_Y + curveY +
         Math.sin(p.x * 6.5 + t * 1.4) * 0.005 +
         Math.cos(p.z * 8.2 + t * 1.05) * 0.004 +
         Math.sin((p.x + p.z) * 3.1 + t * 0.65) * 0.003;
@@ -920,7 +981,26 @@ function createSharkItem() {
   }
 
   root.userData.parts = { bodyGroup, tail };
+  setRenderOverWater(root);
   return root;
+}
+
+// Sharks/dolphins sit underwater but Sam wants them visible through the
+// water disk. Pattern: water mat has depthWrite=false, so the depth buffer
+// still has the planet's depth at water pixels. We mark each aquatic mesh
+// transparent (with opacity 1) + renderOrder=2 so it renders in the
+// transparent pass AFTER the water disk, with depth-test against the
+// planet. Result: the creature passes depth-test on the near side of the
+// planet and draws over the water; planet on the far side still occludes
+// it correctly.
+function setRenderOverWater(root) {
+  root.traverse((m) => {
+    if (m.isMesh && m.material) {
+      m.renderOrder = 2;
+      m.material.transparent = true;
+      m.material.depthWrite = true;
+    }
+  });
 }
 
 // -----------------------------------------------------------------------------
@@ -1007,6 +1087,7 @@ function createDolphinItem() {
   }
 
   root.userData.parts = { bodyGroup };
+  setRenderOverWater(root);
   return root;
 }
 
@@ -1913,70 +1994,90 @@ function updatePenguinAI(item, dt) {
 
 const _aqProbe = new THREE.Vector3();
 
+// Picks a target inside the pond polygon by sampling in pond-local (x, z)
+// directly. This is faster + tighter than angular sampling around homeDir
+// because the rejection rate is much lower (we already know the bounds).
 function pickAquaticTarget(item) {
-  const ai = item.ai;
   const water = item.waterItem;
-  for (let attempt = 0; attempt < 12; attempt++) {
-    _crRef.set(0, 1, 0);
-    if (Math.abs(ai.homeDir.y) > 0.95) _crRef.set(1, 0, 0);
-    _crTan.crossVectors(ai.homeDir, _crRef).normalize();
-    _crTan.applyAxisAngle(ai.homeDir, Math.random() * Math.PI * 2);
-    _crAxis.crossVectors(ai.homeDir, _crTan).normalize();
-    const arc = 0.035 * (0.3 + Math.random() * 0.7);
-    const candidate = ai.homeDir.clone().applyAxisAngle(_crAxis, arc).normalize();
-    if (!water) return candidate;
-    _aqProbe.copy(candidate).multiplyScalar(surfaceHeightAt(candidate));
-    if (pointInWater(water, _aqProbe)) return candidate;
+  if (!water || !water.edgePoints) return item.dir.clone();
+
+  computeWaterLocalBasis(water, _hdLocalX, _hdLocalZ, _hdTerrainUp);
+  const maxR = water.maxEdgeRadius || 0.3;
+
+  for (let attempt = 0; attempt < 22; attempt++) {
+    const angle = Math.random() * Math.PI * 2;
+    const r = Math.random() * (maxR * 0.78); // bias toward interior
+    const px = Math.cos(angle) * r;
+    const pz = Math.sin(angle) * r;
+    if (!pointInWaterPolygon(px, pz, water.edgePoints)) continue;
+    _aqProbe.copy(water.pos)
+      .addScaledVector(_hdLocalX, px * water.scale)
+      .addScaledVector(_hdLocalZ, pz * water.scale);
+    return _aqProbe.normalize().clone();
   }
-  return item.dir.clone(); // give up — stay put briefly
+  return item.dir.clone();
 }
+
+const AQUATIC_LINEAR_SPEED = 0.7;  // world units per second
+const AQUATIC_TURN_RATE = 1.6;     // rad / sec, smoothing facingDir
+const AQUATIC_WIGGLE_AMPLITUDE = 0.22;
+const AQUATIC_WIGGLE_FREQ = 4.0;   // sin freq while swimming
 
 function updateAquaticAI(item, dt, t) {
   if (!item.ai) {
     item.ai = {
       homeDir: item.dir.clone(),
       targetDir: item.dir.clone(),
-      retargetIn: 1 + Math.random() * 3,
+      retargetIn: 0.5 + Math.random() * 2,
       facingDir: null,
       walking: false,
-      divePhase: Math.random() * Math.PI * 2,
+      speedT: 0,
+      swimPhase: Math.random() * Math.PI * 2,
       breachIn: 6 + Math.random() * 12,
-      breachT: 0, // 0 = not breaching; counts down through the jump arc
+      breachT: 0,
     };
+    // Seed the first target right away so it doesn't sit motionless
+    item.ai.targetDir.copy(pickAquaticTarget(item));
   }
   const ai = item.ai;
 
   ai.retargetIn -= dt;
   if (ai.retargetIn <= 0) {
     ai.targetDir.copy(pickAquaticTarget(item));
-    ai.retargetIn = 4 + Math.random() * 5;
+    ai.retargetIn = 2.5 + Math.random() * 4;
   }
 
   _crUpL.copy(item.dir);
-  ai.walking = false;
   let desiredFacing = null;
+  const wasWalking = ai.walking;
 
   const angleToTarget = item.dir.angleTo(ai.targetDir);
-  if (angleToTarget > 0.0005) {
+  // Step size driven by absolute linear speed + speed-easing factor
+  const maxStep = (AQUATIC_LINEAR_SPEED / PLANET_RADIUS) * dt * ai.speedT;
+  if (angleToTarget > maxStep * 0.05) {
     ai.walking = true;
     _crMoveAxis.crossVectors(item.dir, ai.targetDir);
     if (_crMoveAxis.lengthSq() > 1e-8) {
       _crMoveAxis.normalize();
-      const step = Math.min(angleToTarget, 0.011 * dt * 60);
+      const step = Math.min(angleToTarget, Math.max(maxStep, 1e-6));
       const newDir = item.dir.clone().applyAxisAngle(_crMoveAxis, step).normalize();
       _crFwd.crossVectors(_crMoveAxis, _crUpL).normalize();
       desiredFacing = _crFwd.clone();
       moveItem(item, newDir);
     }
+  } else {
+    ai.walking = false;
   }
 
+  // Smoothly chase the desired facing direction
   if (desiredFacing) {
-    if (!ai.facingDir) ai.facingDir = desiredFacing.clone();
-    else {
+    if (!ai.facingDir) {
+      ai.facingDir = desiredFacing.clone();
+    } else {
       const angle = ai.facingDir.angleTo(desiredFacing);
       if (angle > 0.001) {
-        const maxStep = 3.0 * dt;
-        const stepFrac = Math.min(1, maxStep / angle);
+        const maxTurn = AQUATIC_TURN_RATE * dt;
+        const stepFrac = Math.min(1, maxTurn / angle);
         const axis = new THREE.Vector3().crossVectors(ai.facingDir, desiredFacing);
         if (axis.lengthSq() > 1e-6) {
           axis.normalize();
@@ -1988,9 +2089,15 @@ function updateAquaticAI(item, dt, t) {
     setItemFacing(item, ai.facingDir);
   }
 
-  // Aquatic body sits at a constant underwater depth (no constant up/down
-  // bob). Every 8-22s a parabolic breach arc launches the body clearly
-  // above the water surface and splashes back down.
+  // Speed easing — exponential lerp toward target speed.
+  const targetSpeedT = ai.walking ? 1 : 0;
+  ai.speedT += (targetSpeedT - ai.speedT) * Math.min(1, dt * 2.4);
+
+  // Body wiggle: tail/body sways side-to-side while swimming. Amplitude
+  // scales with current speed, so it eases in/out with the motion.
+  ai.swimPhase += dt * (1.4 + ai.speedT * AQUATIC_WIGGLE_FREQ);
+
+  // Breach trigger
   ai.breachIn -= dt;
   if (ai.breachIn <= 0 && ai.breachT <= 0) {
     ai.breachT = 1.1;
@@ -2008,10 +2115,9 @@ function updateAquaticAI(item, dt, t) {
 
   const parts = item.root.userData.parts;
   if (parts && parts.bodyGroup) {
-    // -0.10 = body group offset that puts the body underwater normally.
-    // Breach lifts it above the pond surface.
     parts.bodyGroup.position.y = -0.10 + breachOffset;
     parts.bodyGroup.rotation.x = breachPitch;
+    parts.bodyGroup.rotation.y = Math.sin(ai.swimPhase) * AQUATIC_WIGGLE_AMPLITUDE * ai.speedT;
   }
 }
 
@@ -2338,8 +2444,9 @@ function showWaterHandles(item) {
   const handles = new THREE.Group();
   for (let i = 0; i < item.edgePoints.length; i++) {
     const ep = item.edgePoints[i];
+    const curveY = waterEdgeCurveY(item, ep.x, ep.z);
     const h = new THREE.Mesh(handleGeo, handleMat);
-    h.position.set(ep.x, 0.04, ep.z);
+    h.position.set(ep.x, 0.04 + curveY, ep.z);
     h.userData.isHandle = true;
     h.userData.waterItem = item;
     h.userData.handleIndex = i;
@@ -2389,19 +2496,16 @@ function updateWaterHandlePositions(item) {
   const children = item.handlesGroup.children;
   for (let i = 0; i < item.edgePoints.length && i < children.length; i++) {
     const ep = item.edgePoints[i];
-    children[i].position.set(ep.x, 0.04, ep.z);
+    children[i].position.set(ep.x, 0.04 + waterEdgeCurveY(item, ep.x, ep.z), ep.z);
   }
 }
 
 function moveWaterEdgePoint(item, idx, x, z) {
   item.edgePoints[idx].x = x;
   item.edgePoints[idx].z = z;
-  // The animateWater loop reads from item.edgePoints, so the disk's geometry
-  // updates implicitly next frame. We just nudge the cached max radius and
-  // the handle visual.
   updateWaterMaxRadius(item);
   if (item.handlesGroup) {
-    item.handlesGroup.children[idx]?.position.set(x, 0.04, z);
+    item.handlesGroup.children[idx]?.position.set(x, 0.04 + waterEdgeCurveY(item, x, z), z);
   }
 }
 
@@ -2866,6 +2970,7 @@ function animate() {
 
   updateCreatures(dt);
   animateWater(t);
+  updateDayNight(t);
 
   applyStarTransform();
   updateCamera();
