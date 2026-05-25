@@ -440,21 +440,39 @@ const mushroomStemMat = new THREE.MeshStandardMaterial({
   color: 0xf2e3c4, flatShading: true, roughness: 0.8,
 });
 
-// Builds a faceted irregular blob from an indexed sphere — jitter happens on
-// the SHARED vertices, so faces stay connected (no cracks). Then we convert
-// to non-indexed for flat shading and recompute normals.
-function makeBlobGeo(radius, widthSeg, heightSeg, jitterAmount) {
-  const geo = new THREE.SphereGeometry(radius, widthSeg, heightSeg);
+// Builds a faceted irregular blob. Some geometries (SphereGeometry poles,
+// IcosahedronGeometry non-indexed) have multiple vertex *entries* at the same
+// XYZ position. Jittering each entry independently breaks face connectivity
+// at those shared corners (the gaps Sam saw). Fix: group vertex entries by
+// their original position and apply the SAME jitter scalar to every entry in
+// a group. Coincident vertices stay coincident; faces stay connected.
+function makeBlobGeo(radius, detail, jitterAmount) {
+  const geo = new THREE.IcosahedronGeometry(radius, detail);
   const pos = geo.attributes.position;
-  const v = new THREE.Vector3();
+
+  const groups = new Map();
+  const round = (x) => Math.round(x * 1e5) / 1e5;
   for (let i = 0; i < pos.count; i++) {
-    v.fromBufferAttribute(pos, i);
-    v.multiplyScalar(1 - jitterAmount * 0.5 + Math.random() * jitterAmount);
-    pos.setXYZ(i, v.x, v.y, v.z);
+    const key = `${round(pos.getX(i))},${round(pos.getY(i))},${round(pos.getZ(i))}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = { jitter: 1 - jitterAmount * 0.5 + Math.random() * jitterAmount, indices: [] };
+      groups.set(key, group);
+    }
+    group.indices.push(i);
   }
-  const ni = geo.toNonIndexed();
-  ni.computeVertexNormals();
-  return ni;
+
+  const v = new THREE.Vector3();
+  for (const group of groups.values()) {
+    for (const i of group.indices) {
+      v.fromBufferAttribute(pos, i);
+      v.multiplyScalar(group.jitter);
+      pos.setXYZ(i, v.x, v.y, v.z);
+    }
+  }
+
+  geo.computeVertexNormals();
+  return geo;
 }
 
 // Flatten vertices below threshold so the blob sits on the ground.
@@ -478,8 +496,8 @@ function createTreeItem() {
 function createRockItem() {
   const g = new THREE.Group();
 
-  const mainGeo = makeBlobGeo(0.085, 7, 5, 0.4);
-  flattenBottom(mainGeo, -0.015, 0.25);
+  const mainGeo = makeBlobGeo(0.085, 1, 0.35);
+  flattenBottom(mainGeo, -0.02, 0.25);
   const main = new THREE.Mesh(mainGeo, rockMats[Math.floor(Math.random() * 2)]);
   main.position.y = 0.05;
   main.rotation.y = Math.random() * Math.PI * 2;
@@ -487,7 +505,7 @@ function createRockItem() {
 
   // Most rocks get a smaller buddy stone next to them
   if (Math.random() < 0.7) {
-    const sGeo = makeBlobGeo(0.04, 6, 4, 0.45);
+    const sGeo = makeBlobGeo(0.04, 1, 0.4);
     flattenBottom(sGeo, -0.01, 0.25);
     const s = new THREE.Mesh(sGeo, rockMats[2]);
     const a = Math.random() * Math.PI * 2;
@@ -509,7 +527,7 @@ function createBushItem() {
     { x:  0.015, y: 0.095, z: -0.035, r: 0.043, mat: bushMats[1] },
   ];
   for (const l of lumps) {
-    const geo = makeBlobGeo(l.r, 7, 5, 0.22);
+    const geo = makeBlobGeo(l.r, 1, 0.2);
     flattenBottom(geo, -l.r * 0.7, 0.45);
     const m = new THREE.Mesh(geo, l.mat);
     m.position.set(l.x, l.y, l.z);
@@ -541,11 +559,146 @@ function createMushroomItem() {
   return g;
 }
 
+const waterMat = new THREE.MeshStandardMaterial({
+  color: 0x3a8bd6,
+  transparent: true,
+  opacity: 0.7,
+  roughness: 0.2,
+  metalness: 0.2,
+  flatShading: false,
+  side: THREE.DoubleSide,
+});
+const waterEdgeMat = new THREE.MeshStandardMaterial({
+  color: 0x6fb1e6,
+  transparent: true,
+  opacity: 0.5,
+  roughness: 0.3,
+});
+
+function createWaterItem() {
+  const g = new THREE.Group();
+  // Slightly domed circle to feel like a pond surface
+  const geo = new THREE.CircleGeometry(0.22, 24);
+  geo.rotateX(-Math.PI / 2);
+  geo.translate(0, 0.005, 0);
+  const disk = new THREE.Mesh(geo, waterMat);
+  g.add(disk);
+  // Subtle thicker rim disk for visual edge
+  const rimGeo = new THREE.RingGeometry(0.205, 0.235, 24);
+  rimGeo.rotateX(-Math.PI / 2);
+  rimGeo.translate(0, 0.008, 0);
+  const rim = new THREE.Mesh(rimGeo, waterEdgeMat);
+  g.add(rim);
+  return g;
+}
+
+const penguinBodyMat = new THREE.MeshStandardMaterial({ color: 0x3a3d6e, flatShading: true, roughness: 0.6 });
+const penguinBellyMat = new THREE.MeshStandardMaterial({ color: 0xc4e0e8, flatShading: true, roughness: 0.7 });
+const penguinBeakMat = new THREE.MeshStandardMaterial({ color: 0xe89a4e, flatShading: true, roughness: 0.7 });
+const penguinFootMat = new THREE.MeshStandardMaterial({ color: 0xe89a4e, flatShading: true, roughness: 0.8 });
+const penguinEyeWhiteMat = new THREE.MeshStandardMaterial({
+  color: 0xfffce8, emissive: 0x66ccff, emissiveIntensity: 0.4, roughness: 0.4,
+});
+const penguinPupilMat = new THREE.MeshStandardMaterial({ color: 0x1a1a2a });
+const penguinAntennaMat = new THREE.MeshStandardMaterial({
+  color: 0xff66cc, emissive: 0xff33aa, emissiveIntensity: 0.6, roughness: 0.4,
+});
+
+function createPenguinItem() {
+  const root = new THREE.Group();
+
+  // Body group lets us bob/animate without rebuilding the matrix
+  const bodyGroup = new THREE.Group();
+  root.add(bodyGroup);
+
+  const bodyGeo = new THREE.SphereGeometry(0.11, 10, 8);
+  bodyGeo.scale(0.9, 1.2, 0.9);
+  const body = new THREE.Mesh(bodyGeo, penguinBodyMat);
+  body.position.y = 0.13;
+  bodyGroup.add(body);
+
+  const bellyGeo = new THREE.SphereGeometry(0.09, 10, 8);
+  bellyGeo.scale(0.85, 1.05, 0.5);
+  const belly = new THREE.Mesh(bellyGeo, penguinBellyMat);
+  belly.position.set(0, 0.12, 0.038);
+  bodyGroup.add(belly);
+
+  const headGeo = new THREE.SphereGeometry(0.075, 10, 8);
+  const head = new THREE.Mesh(headGeo, penguinBodyMat);
+  head.position.y = 0.27;
+  bodyGroup.add(head);
+
+  const beakGeo = new THREE.ConeGeometry(0.022, 0.05, 6);
+  beakGeo.rotateX(Math.PI / 2);
+  beakGeo.translate(0, 0, 0.025);
+  const beak = new THREE.Mesh(beakGeo, penguinBeakMat);
+  beak.position.set(0, 0.26, 0.07);
+  bodyGroup.add(beak);
+
+  // Big alien eyes
+  const eyeGeo = new THREE.SphereGeometry(0.022, 8, 6);
+  const eyeL = new THREE.Mesh(eyeGeo, penguinEyeWhiteMat);
+  const eyeR = new THREE.Mesh(eyeGeo, penguinEyeWhiteMat);
+  eyeL.position.set(-0.032, 0.295, 0.058);
+  eyeR.position.set(0.032, 0.295, 0.058);
+  bodyGroup.add(eyeL, eyeR);
+
+  const pupilGeo = new THREE.SphereGeometry(0.009, 6, 5);
+  const pupilL = new THREE.Mesh(pupilGeo, penguinPupilMat);
+  const pupilR = new THREE.Mesh(pupilGeo, penguinPupilMat);
+  pupilL.position.set(-0.032, 0.295, 0.077);
+  pupilR.position.set(0.032, 0.295, 0.077);
+  bodyGroup.add(pupilL, pupilR);
+
+  // Flippers — anchored from shoulder so we can flap
+  const flipperGeo = new THREE.SphereGeometry(0.05, 8, 6);
+  flipperGeo.scale(0.28, 1.1, 0.55);
+  flipperGeo.translate(0, -0.04, 0); // pivot at top
+  const flipperL = new THREE.Mesh(flipperGeo, penguinBodyMat);
+  const flipperR = new THREE.Mesh(flipperGeo, penguinBodyMat);
+  flipperL.position.set(-0.105, 0.18, 0);
+  flipperR.position.set(0.105, 0.18, 0);
+  flipperL.rotation.z = 0.25;
+  flipperR.rotation.z = -0.25;
+  bodyGroup.add(flipperL, flipperR);
+
+  // Flat oval feet
+  const footGeo = new THREE.SphereGeometry(0.04, 8, 6);
+  footGeo.scale(0.65, 0.3, 1.3);
+  const footL = new THREE.Mesh(footGeo, penguinFootMat);
+  const footR = new THREE.Mesh(footGeo, penguinFootMat);
+  footL.position.set(-0.035, 0.018, 0.04);
+  footR.position.set(0.035, 0.018, 0.04);
+  root.add(footL, footR);
+
+  // Antennae — sway-able sub-group
+  const antennaGroup = new THREE.Group();
+  antennaGroup.position.y = 0.32;
+  for (let i = 0; i < 2; i++) {
+    const x = i === 0 ? -0.025 : 0.025;
+    const stalkGeo = new THREE.CylinderGeometry(0.005, 0.007, 0.08, 5);
+    stalkGeo.translate(0, 0.04, 0);
+    const stalk = new THREE.Mesh(stalkGeo, penguinAntennaMat);
+    stalk.position.set(x, 0, 0);
+    antennaGroup.add(stalk);
+
+    const tip = new THREE.Mesh(new THREE.SphereGeometry(0.016, 6, 5), penguinAntennaMat);
+    tip.position.set(x, 0.085, 0);
+    antennaGroup.add(tip);
+  }
+  bodyGroup.add(antennaGroup);
+
+  root.userData.parts = { bodyGroup, flipperL, flipperR, antennaGroup };
+  return root;
+}
+
 const ITEM_TYPES = {
-  tree:     { label: 'Tree',     build: createTreeItem,     defaultScale: 6,   collisionR: 0.15 },
-  rock:     { label: 'Rock',     build: createRockItem,     defaultScale: 4,   collisionR: 0.18 },
-  bush:     { label: 'Bush',     build: createBushItem,     defaultScale: 3,   collisionR: 0.14 },
-  mushroom: { label: 'Mushroom', build: createMushroomItem, defaultScale: 2.5, collisionR: 0.06 },
+  tree:     { label: 'Tree',     build: createTreeItem,     defaultScale: 6,   collisionR: 0.035, collisionType: 'solid' },
+  rock:     { label: 'Rock',     build: createRockItem,     defaultScale: 4,   collisionR: 0.06,  collisionType: 'solid' },
+  bush:     { label: 'Bush',     build: createBushItem,     defaultScale: 3,   collisionR: 0.05,  collisionType: 'solid' },
+  mushroom: { label: 'Mushroom', build: createMushroomItem, defaultScale: 2.5, collisionR: 0.04,  collisionType: 'solid' },
+  water:    { label: 'Water',    build: createWaterItem,    defaultScale: 4,   collisionR: 0.21,  collisionType: 'submerge' },
+  penguin:  { label: 'Penguin',  build: createPenguinItem,  defaultScale: 1.4, collisionR: 0.10,  collisionType: 'solid', behavior: 'creature' },
 };
 
 // =============================================================================
@@ -637,12 +790,13 @@ function resizeItem(item, factor) {
 
 function resolveCollisions(targetPos) {
   for (const item of placedItems) {
+    const def = ITEM_TYPES[item.type];
+    if (def.collisionType !== 'solid') continue;
     const dx = targetPos.x - item.pos.x;
     const dy = targetPos.y - item.pos.y;
     const dz = targetPos.z - item.pos.z;
     const distSq = dx * dx + dy * dy + dz * dz;
     if (distSq > 9) continue;
-    const def = ITEM_TYPES[item.type];
     const totalR = STAR_COLLISION_RADIUS + def.collisionR * item.scale;
     if (distSq < totalR * totalR && distSq > 1e-6) {
       const dist = Math.sqrt(distSq);
@@ -650,6 +804,184 @@ function resolveCollisions(targetPos) {
       targetPos.x += dx * push;
       targetPos.y += dy * push;
       targetPos.z += dz * push;
+    }
+  }
+}
+
+const STAR_WADE_DEPTH = 0.18;
+
+// Adjust Star's radial height: surface normally, surface - WADE_DEPTH inside
+// any 'submerge' item.
+function settleStarOnSurface(starPos) {
+  const dir = _settleDir.copy(starPos).normalize();
+  let depthOffset = 0;
+
+  for (const item of placedItems) {
+    const def = ITEM_TYPES[item.type];
+    if (def.collisionType !== 'submerge') continue;
+    const dx = starPos.x - item.pos.x;
+    const dy = starPos.y - item.pos.y;
+    const dz = starPos.z - item.pos.z;
+    const r = def.collisionR * item.scale;
+    if (dx * dx + dy * dy + dz * dz < r * r) {
+      depthOffset = STAR_WADE_DEPTH;
+      break;
+    }
+  }
+
+  starPos.copy(dir).multiplyScalar(surfaceHeightAt(dir) - depthOffset);
+}
+const _settleDir = new THREE.Vector3();
+
+// =============================================================================
+// Creatures — wander AI + flipper / antenna animation
+// =============================================================================
+
+const _crUpL = new THREE.Vector3();
+const _crToStar = new THREE.Vector3();
+const _crTan = new THREE.Vector3();
+const _crAxis = new THREE.Vector3();
+const _crMoveAxis = new THREE.Vector3();
+const _crTerrainUp = new THREE.Vector3();
+const _crFwd = new THREE.Vector3();
+const _crRight = new THREE.Vector3();
+const _crBasis = new THREE.Matrix4();
+const _crRef = new THREE.Vector3();
+const _crFwdRef = new THREE.Vector3();
+const _crSign = new THREE.Vector3();
+
+function setItemFacing(item, facingDir) {
+  computeTerrainNormal(item.dir, _crTerrainUp);
+  _crFwd.copy(facingDir).projectOnPlane(_crTerrainUp);
+  if (_crFwd.lengthSq() < 1e-6) return;
+  _crFwd.normalize();
+  _crRight.crossVectors(_crTerrainUp, _crFwd).normalize();
+  _crBasis.makeBasis(_crRight, _crTerrainUp, _crFwd);
+  item.root.quaternion.setFromRotationMatrix(_crBasis);
+
+  // Keep item.yaw in sync (so drag-to-move preserves current facing)
+  _crRef.set(0, 1, 0);
+  if (Math.abs(_crTerrainUp.y) > 0.95) _crRef.set(1, 0, 0);
+  _crFwdRef.crossVectors(_crTerrainUp, _crRef).normalize();
+  _crSign.crossVectors(_crFwdRef, _crFwd);
+  const sin = _crSign.dot(_crTerrainUp);
+  const cos = _crFwdRef.dot(_crFwd);
+  item.yaw = Math.atan2(sin, cos);
+}
+
+const PENGUIN_WALK_SPEED = 0.005;
+const PENGUIN_TURN_SPEED = 3.0;
+const PENGUIN_WANDER_ARC = 0.025;
+const PENGUIN_NOTICE_DIST = 4.0;
+
+function updateCreatures(dt) {
+  for (const item of placedItems) {
+    const def = ITEM_TYPES[item.type];
+    if (def.behavior !== 'creature') continue;
+
+    if (!item.ai) {
+      item.ai = {
+        homeDir: item.dir.clone(),
+        targetDir: item.dir.clone(),
+        retargetIn: 1.5 + Math.random() * 3,
+        facingDir: null,
+        walkAnim: 0,
+        idle: true,
+        walking: false,
+      };
+    }
+    const ai = item.ai;
+
+    _crUpL.copy(item.dir);
+    _crToStar.subVectors(star.position, item.pos);
+    const distToStar = _crToStar.length();
+
+    let desiredFacing = null;
+    ai.walking = false;
+
+    if (distToStar < PENGUIN_NOTICE_DIST) {
+      // Look at Star, stop wandering
+      _crToStar.projectOnPlane(_crUpL);
+      if (_crToStar.lengthSq() > 0.001) desiredFacing = _crToStar.clone().normalize();
+      ai.idle = true;
+      ai.retargetIn = Math.max(ai.retargetIn, 1.5);
+    } else {
+      ai.retargetIn -= dt;
+      if (ai.retargetIn <= 0 && ai.idle) {
+        // Pick new wander target near home
+        _crRef.set(0, 1, 0);
+        if (Math.abs(ai.homeDir.y) > 0.95) _crRef.set(1, 0, 0);
+        _crTan.crossVectors(ai.homeDir, _crRef).normalize();
+        _crTan.applyAxisAngle(ai.homeDir, Math.random() * Math.PI * 2);
+        _crAxis.crossVectors(ai.homeDir, _crTan).normalize();
+        const arc = PENGUIN_WANDER_ARC * (0.4 + Math.random() * 0.6);
+        ai.targetDir.copy(ai.homeDir).applyAxisAngle(_crAxis, arc).normalize();
+        ai.idle = false;
+        ai.retargetIn = 3 + Math.random() * 4;
+      }
+
+      if (!ai.idle) {
+        const angleToTarget = item.dir.angleTo(ai.targetDir);
+        if (angleToTarget > 0.0005) {
+          ai.walking = true;
+          _crMoveAxis.crossVectors(item.dir, ai.targetDir);
+          if (_crMoveAxis.lengthSq() > 1e-8) {
+            _crMoveAxis.normalize();
+            const step = Math.min(angleToTarget, PENGUIN_WALK_SPEED * dt * 60);
+            const newDir = item.dir.clone().applyAxisAngle(_crMoveAxis, step).normalize();
+            // Movement direction in tangent plane = perpendicular to up, along moveAxis
+            _crFwd.crossVectors(_crMoveAxis, _crUpL).normalize();
+            desiredFacing = _crFwd.clone();
+            moveItem(item, newDir);
+            _crUpL.copy(item.dir);
+          }
+        } else {
+          ai.idle = true;
+          ai.retargetIn = 1.5 + Math.random() * 2.5;
+        }
+      }
+    }
+
+    // Smoothly rotate facingDir toward desiredFacing
+    if (desiredFacing) {
+      if (!ai.facingDir) {
+        ai.facingDir = desiredFacing.clone();
+      } else {
+        const angle = ai.facingDir.angleTo(desiredFacing);
+        if (angle > 0.001) {
+          const maxStep = PENGUIN_TURN_SPEED * dt;
+          const stepFrac = Math.min(1, maxStep / angle);
+          const stepAngle = stepFrac * angle;
+          const axis = new THREE.Vector3().crossVectors(ai.facingDir, desiredFacing);
+          if (axis.lengthSq() > 1e-6) {
+            axis.normalize();
+            ai.facingDir.applyAxisAngle(axis, stepAngle);
+          }
+          ai.facingDir.projectOnPlane(_crUpL).normalize();
+        }
+      }
+      setItemFacing(item, ai.facingDir);
+    }
+
+    // Walk / idle animation
+    const parts = item.root.userData.parts;
+    if (parts) {
+      if (ai.walking) {
+        ai.walkAnim += dt * 5;
+        const swing = Math.sin(ai.walkAnim);
+        parts.flipperL.rotation.z = 0.25 + swing * 0.45;
+        parts.flipperR.rotation.z = -0.25 - swing * 0.45;
+        parts.bodyGroup.position.y = Math.abs(Math.sin(ai.walkAnim * 2)) * 0.012;
+      } else {
+        ai.walkAnim += dt * 0.6;
+        parts.flipperL.rotation.z = 0.25 + Math.sin(ai.walkAnim) * 0.05;
+        parts.flipperR.rotation.z = -0.25 - Math.sin(ai.walkAnim + 0.3) * 0.05;
+        parts.bodyGroup.position.y = 0;
+      }
+      if (parts.antennaGroup) {
+        parts.antennaGroup.rotation.z = Math.sin(ai.walkAnim * 0.7) * 0.18;
+        parts.antennaGroup.rotation.x = Math.sin(ai.walkAnim * 0.5 + 1.1) * 0.12;
+      }
     }
   }
 }
@@ -1053,7 +1385,9 @@ function animate() {
   star.forward.projectOnPlane(_up).normalize();
 
   if (move !== 0) {
-    _moveAxis.crossVectors(star.forward, _up).normalize();
+    // moveAxis = up × forward so a positive angle rotates Star's position
+    // toward her forward direction (W = walk forward, S = walk backward)
+    _moveAxis.crossVectors(_up, star.forward).normalize();
     const angle = move * WALK_SPEED * dt;
 
     _intendedPos.copy(star.position).applyAxisAngle(_moveAxis, angle);
@@ -1061,16 +1395,13 @@ function animate() {
     _intendedPos.setLength(surfaceHeightAt(_intendedDir));
 
     resolveCollisions(_intendedPos);
-    _intendedDir.copy(_intendedPos).normalize();
-    _intendedPos.setLength(surfaceHeightAt(_intendedDir));
 
     star.position.copy(_intendedPos);
     star.forward.applyAxisAngle(_moveAxis, angle);
-  } else {
-    // Keep Star glued to surface even when idle (if terrain noise is sampled differently)
-    const dir = star.position.clone().normalize();
-    star.position.setLength(surfaceHeightAt(dir));
   }
+
+  // Glue Star to the surface (sinking into water if she's standing on it)
+  settleStarOnSurface(star.position);
 
   // -------- Fox animation --------
   const fx = starTheFox.userData;
@@ -1104,6 +1435,8 @@ function animate() {
     const breath = 1 + Math.sin(t * IDLE_BREATH_FREQ * Math.PI * 2) * 0.03;
     fx.bodyGroup.scale.set(1, breath, 1);
   }
+
+  updateCreatures(dt);
 
   applyStarTransform();
   updateCamera();
