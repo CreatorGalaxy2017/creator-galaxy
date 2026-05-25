@@ -27,13 +27,19 @@ A small mountain planet covered in trees. Star can stand on it and walk around i
 
 ## Current status
 
-Project initialized. Basic Three.js scene is running with:
-- Full-screen black-space canvas
-- Soft "Creator Galaxy" title in the top-left
-- A single slowly-rotating warm-toned sphere as the placeholder planet
-- Ambient + directional lighting for shading
-- Resize handling and animation loop
+- Full-screen black-space canvas with soft "Creator Galaxy" title (top-left)
+- **Low-poly mountain planet** built from a subdivided icosahedron, vertex-displaced with layered 3D noise, flat-shaded for that *Alba*-style faceted look
+- Per-face biome colors: warm meadow green → grass → foothill brown → pale stone peaks
+- Slight axial tilt and slow rotation so the terrain is clearly turning
+- Three-light setup: cool ambient + warm directional "sun" + cool rim light
+- Window resize handling and animation loop
 
 ## Next milestone
 
-Replace the placeholder sphere with a real **mountain planet** that Star the Fox can stand on and walk around — spherical terrain, basic low-poly mountains and trees, and a controllable fox character.
+Bring **Star the Fox** onto the mountain planet:
+1. Low-poly fox mesh (orange/white fur, white star around right eye, simple space suit + helmet, tail out)
+2. Place Star on the planet surface with her "up" vector aligned to the planet's surface normal
+3. Tumbling camera that follows Star around the sphere
+4. Basic walk controls (keyboard / on-screen) so Star can move across the curved terrain
+
+After that: scatter a few low-poly trees, then start on the first creature (Hoppa).
