@@ -625,11 +625,11 @@ function createMushroomItem() {
 }
 
 const waterMat = new THREE.MeshStandardMaterial({
-  color: 0x123e6a,        // deep ocean blue
+  color: 0x3380c2,        // close to the original blue, just a touch darker
   transparent: true,
-  opacity: 0.92,          // mostly opaque so planet floor is hidden
-  roughness: 0.1,
-  metalness: 0.55,
+  opacity: 0.82,          // a bit more body than the original 0.78
+  roughness: 0.12,
+  metalness: 0.5,
   flatShading: false,
   side: THREE.DoubleSide,
   depthWrite: false,      // so sharks (rendered later) can pass depth test against planet
