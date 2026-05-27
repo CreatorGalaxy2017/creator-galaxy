@@ -71,8 +71,10 @@ const rimLight = new THREE.DirectionalLight(0x88a0ff, 0.32);
 rimLight.position.set(-120, -60, -90);
 scene.add(rimLight);
 
-// Day/night cycle — full revolution every 10 minutes.
-const DAY_NIGHT_PERIOD = 600; // seconds
+// Day/night cycle — full revolution every 30 minutes. Game starts at noon
+// (phase=0, sunHeight=1) and reaches complete darkness at midnight (phase=0.5,
+// 15 minutes in), then gradually returns to day.
+const DAY_NIGHT_PERIOD = 1800; // seconds (30 min cycle, 15 min day→dark)
 const _dnSunDir = new THREE.Vector3();
 const _dnBgColor = new THREE.Color();
 
@@ -120,6 +122,12 @@ function updateDayNight(elapsedTime) {
   _dnBgColor.setRGB(bg * 0.55 + horizonFactor * 0.10, bg * 0.65 + horizonFactor * 0.06, bg * 0.85);
   scene.background.copy(_dnBgColor);
   if (scene.fog) scene.fog.color.copy(_dnBgColor);
+
+  // Flashlight intensity scales with darkness — bright at night, dim in
+  // sunlight so it's not blinding during the day.
+  if (equipment.flashlight.equipped && equipment.flashlight.light) {
+    equipment.flashlight.light.intensity = 0.4 + (1 - dayFactor) * 3.2;
+  }
 }
 
 // =============================================================================
@@ -249,6 +257,9 @@ scene.add(planet);
 // Star the Fox — now with legs, tail rig, body group for animation
 // =============================================================================
 
+// Bipedal Star: stands upright on two legs, two arms with grabbable hands.
+// Userdata exposes { bodyGroup, legs:{l,r}, arms:{l,r}, hands:{l,r}, tailRoot }
+// for the animate loop to drive walk / swim / hold-flashlight poses.
 function createStarTheFox() {
   const fox = new THREE.Group();
 
@@ -256,58 +267,71 @@ function createStarTheFox() {
   const FUR_WHITE = 0xfaf2e6;
   const SUIT_WHITE = 0xdce4f0;
   const SUIT_ACCENT = 0xff9a3c;
-  const LEG_ORANGE = 0xd66520;
+  const LIMB_ORANGE = 0xd66520;
   const EYE_BLACK = 0x121212;
   const HELMET_TINT = 0xaaccff;
 
   const furOrange = new THREE.MeshStandardMaterial({ color: FUR_ORANGE, flatShading: true, roughness: 0.85 });
   const furWhite = new THREE.MeshStandardMaterial({ color: FUR_WHITE, flatShading: true, roughness: 0.85 });
   const suit = new THREE.MeshStandardMaterial({ color: SUIT_WHITE, flatShading: true, roughness: 0.65 });
-  const legMat = new THREE.MeshStandardMaterial({ color: LEG_ORANGE, flatShading: true, roughness: 0.85 });
+  const limbMat = new THREE.MeshStandardMaterial({ color: LIMB_ORANGE, flatShading: true, roughness: 0.85 });
 
-  // Legs attach to fox root so they're not affected by body sway / breathing
-  const legGeo = new THREE.CylinderGeometry(0.022, 0.016, 0.075, 6);
-  legGeo.translate(0, -0.0375, 0);
+  // ===== Two legs (pivot at hip, geometry hangs down) =====
+  const legGeo = new THREE.CylinderGeometry(0.026, 0.020, 0.085, 6);
+  legGeo.translate(0, -0.0425, 0);
 
   const HIP_Y = 0.085;
-  const HIP_X = 0.045;
-  const HIP_Z_FRONT = 0.05;
-  const HIP_Z_BACK = -0.05;
+  const legL = new THREE.Mesh(legGeo, limbMat);
+  legL.position.set(-0.04, HIP_Y, 0);
+  const legR = new THREE.Mesh(legGeo, limbMat);
+  legR.position.set(0.04, HIP_Y, 0);
+  fox.add(legL, legR);
 
-  const legFL = new THREE.Mesh(legGeo, legMat);
-  legFL.position.set(-HIP_X, HIP_Y, HIP_Z_FRONT);
-  const legFR = new THREE.Mesh(legGeo, legMat);
-  legFR.position.set(HIP_X, HIP_Y, HIP_Z_FRONT);
-  const legBL = new THREE.Mesh(legGeo, legMat);
-  legBL.position.set(-HIP_X, HIP_Y, HIP_Z_BACK);
-  const legBR = new THREE.Mesh(legGeo, legMat);
-  legBR.position.set(HIP_X, HIP_Y, HIP_Z_BACK);
-  fox.add(legFL, legFR, legBL, legBR);
-
-  // Everything above the legs lives in bodyGroup, which we sway & breathe
+  // ===== Body group =====
   const bodyGroup = new THREE.Group();
   bodyGroup.position.y = 0.05;
   fox.add(bodyGroup);
 
-  const bodyGeo = new THREE.SphereGeometry(0.09, 12, 10);
-  bodyGeo.scale(1, 1.25, 0.85);
+  // Upright torso
+  const bodyGeo = new THREE.SphereGeometry(0.085, 12, 10);
+  bodyGeo.scale(0.95, 1.45, 0.75);
   const body = new THREE.Mesh(bodyGeo, suit);
-  body.position.y = 0.11;
+  body.position.y = 0.15;
   bodyGroup.add(body);
 
   const chest = new THREE.Mesh(
-    new THREE.BoxGeometry(0.06, 0.04, 0.02),
+    new THREE.BoxGeometry(0.065, 0.045, 0.022),
     new THREE.MeshStandardMaterial({ color: SUIT_ACCENT, flatShading: true })
   );
-  chest.position.set(0, 0.13, 0.075);
+  chest.position.set(0, 0.16, 0.07);
   bodyGroup.add(chest);
 
-  const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.09, 1), furOrange);
-  head.position.y = 0.255;
+  // ===== Two arms with hands. Each arm is a group pivoted at the shoulder;
+  // the arm mesh hangs down from it, and the hand is at the wrist. =====
+  const armGeo = new THREE.CylinderGeometry(0.022, 0.017, 0.115, 5);
+  armGeo.translate(0, -0.0575, 0);
+
+  function buildArm(side) {
+    const root = new THREE.Group();
+    root.position.set(side * 0.085, 0.235, 0);
+    const arm = new THREE.Mesh(armGeo, limbMat);
+    root.add(arm);
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.026, 8, 6), limbMat);
+    hand.position.y = -0.13;
+    root.add(hand);
+    return { root, hand };
+  }
+  const armLeft = buildArm(-1);
+  const armRight = buildArm(1);
+  bodyGroup.add(armLeft.root, armRight.root);
+
+  // ===== Head =====
+  const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.085, 1), furOrange);
+  head.position.y = 0.305;
   bodyGroup.add(head);
 
   const snout = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.08, 6), furWhite);
-  snout.position.set(0, 0.24, 0.085);
+  snout.position.set(0, 0.29, 0.085);
   snout.rotation.x = Math.PI / 2;
   bodyGroup.add(snout);
 
@@ -315,18 +339,19 @@ function createStarTheFox() {
     new THREE.SphereGeometry(0.012, 8, 6),
     new THREE.MeshStandardMaterial({ color: EYE_BLACK })
   );
-  noseTip.position.set(0, 0.24, 0.125);
+  noseTip.position.set(0, 0.29, 0.125);
   bodyGroup.add(noseTip);
 
   const earGeo = new THREE.ConeGeometry(0.032, 0.07, 4);
   const earL = new THREE.Mesh(earGeo, furOrange);
   const earR = new THREE.Mesh(earGeo, furOrange);
-  earL.position.set(-0.055, 0.335, -0.01);
-  earR.position.set(0.055, 0.335, -0.01);
+  earL.position.set(-0.052, 0.385, -0.005);
+  earR.position.set(0.052, 0.385, -0.005);
   earL.rotation.z = 0.22;
   earR.rotation.z = -0.22;
   bodyGroup.add(earL, earR);
 
+  // Star marking around the right eye
   const starShape = new THREE.Shape();
   const STAR_PTS = 5;
   const STAR_OUTER = 0.032;
@@ -343,25 +368,25 @@ function createStarTheFox() {
     new THREE.ShapeGeometry(starShape),
     new THREE.MeshStandardMaterial({ color: FUR_WHITE, flatShading: true, side: THREE.DoubleSide })
   );
-  starMark.position.set(0.04, 0.27, 0.078);
-  starMark.lookAt(0.04, 0.27, 1);
+  starMark.position.set(0.04, 0.32, 0.078);
+  starMark.lookAt(0.04, 0.32, 1);
   bodyGroup.add(starMark);
 
   const eyeMat = new THREE.MeshStandardMaterial({ color: EYE_BLACK });
   const eyeGeo = new THREE.SphereGeometry(0.012, 8, 6);
   const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
   const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
-  eyeL.position.set(-0.04, 0.27, 0.082);
-  eyeR.position.set(0.04, 0.27, 0.088);
+  eyeL.position.set(-0.04, 0.32, 0.082);
+  eyeR.position.set(0.04, 0.32, 0.088);
   bodyGroup.add(eyeL, eyeR);
 
-  // Tail rig: tailRoot does the swish (rotation.y); tailTilt holds the up-and-back tilt
+  // Tail rig (low on the back) — pivots side-to-side for swish
   const tailRoot = new THREE.Group();
-  tailRoot.position.set(0, 0.13, -0.09);
+  tailRoot.position.set(0, 0.135, -0.075);
   bodyGroup.add(tailRoot);
 
   const tailTilt = new THREE.Group();
-  tailTilt.rotation.x = -0.55;
+  tailTilt.rotation.x = -0.6;
   tailRoot.add(tailTilt);
 
   const tailGeo = new THREE.ConeGeometry(0.035, 0.16, 6);
@@ -376,15 +401,17 @@ function createStarTheFox() {
   tailTip.position.set(0, 0.17, 0);
   tailTilt.add(tailTip);
 
+  // Backpack on the upper back
   const backpack = new THREE.Mesh(
-    new THREE.BoxGeometry(0.08, 0.1, 0.04),
+    new THREE.BoxGeometry(0.082, 0.13, 0.04),
     new THREE.MeshStandardMaterial({ color: 0xc8d2e0, flatShading: true })
   );
-  backpack.position.set(0, 0.13, -0.08);
+  backpack.position.set(0, 0.18, -0.075);
   bodyGroup.add(backpack);
 
+  // Helmet around the head
   const helmet = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(0.125, 2),
+    new THREE.IcosahedronGeometry(0.12, 2),
     new THREE.MeshStandardMaterial({
       color: HELMET_TINT,
       transparent: true,
@@ -393,13 +420,15 @@ function createStarTheFox() {
       metalness: 0.4,
     })
   );
-  helmet.position.y = 0.265;
+  helmet.position.y = 0.315;
   helmet.renderOrder = 1;
   bodyGroup.add(helmet);
 
   fox.userData = {
     bodyGroup,
-    legs: { fl: legFL, fr: legFR, bl: legBL, br: legBR },
+    legs: { l: legL, r: legR },
+    arms: { l: armLeft.root, r: armRight.root },
+    hands: { l: armLeft.hand, r: armRight.hand },
     tailRoot,
   };
   return fox;
@@ -407,6 +436,71 @@ function createStarTheFox() {
 
 const starTheFox = createStarTheFox();
 planet.add(starTheFox);
+
+// =============================================================================
+// Equipment (held items) — currently just the flashlight.
+// =============================================================================
+
+const equipment = {
+  flashlight: { equipped: false, mesh: null, light: null },
+};
+
+function buildFlashlightMesh() {
+  const g = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0x282b34, flatShading: true, metalness: 0.4, roughness: 0.55 });
+  const lensMat = new THREE.MeshStandardMaterial({
+    color: 0xfff4a8, emissive: 0xfff4a8, emissiveIntensity: 1.4, roughness: 0.3,
+  });
+  const headMat = new THREE.MeshStandardMaterial({ color: 0x4a4d57, flatShading: true, metalness: 0.55, roughness: 0.5 });
+
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.05, 8), bodyMat);
+  body.position.y = -0.025;
+  g.add(body);
+
+  const head = new THREE.Mesh(new THREE.CylinderGeometry(0.020, 0.014, 0.020, 8), headMat);
+  head.position.y = 0.010;
+  g.add(head);
+
+  const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.005, 8), lensMat);
+  lens.position.y = 0.022;
+  g.add(lens);
+
+  return g;
+}
+
+function equipFlashlight() {
+  if (equipment.flashlight.equipped) return;
+  const hand = starTheFox.userData.hands.r;
+
+  const mesh = buildFlashlightMesh();
+  // Sit in the hand, oriented along hand's local +Y so it points the same
+  // direction the arm extends. The "holding" arm pose has armR rotated
+  // forward, so the flashlight ends up aiming forward in front of Star.
+  mesh.position.set(0, -0.02, 0);
+  hand.add(mesh);
+
+  const light = new THREE.SpotLight(0xfff4a8, 0.0, 14, Math.PI / 6.5, 0.45, 1.4);
+  light.position.set(0, 0.03, 0);
+  const target = new THREE.Object3D();
+  target.position.set(0, 1, 0); // along +Y in flashlight frame
+  mesh.add(light, target);
+  light.target = target;
+
+  equipment.flashlight = { equipped: true, mesh, light };
+}
+
+function unequipFlashlight() {
+  const e = equipment.flashlight;
+  if (!e.equipped) return;
+  const hand = starTheFox.userData.hands.r;
+  if (e.mesh) {
+    hand.remove(e.mesh);
+    e.mesh.traverse((m) => {
+      if (m.geometry) m.geometry.dispose?.();
+    });
+  }
+  equipment.flashlight = { equipped: false, mesh: null, light: null };
+}
 
 // =============================================================================
 // Star state on planet
@@ -625,14 +719,16 @@ function createMushroomItem() {
 }
 
 const waterMat = new THREE.MeshStandardMaterial({
-  color: 0x3380c2,        // close to the original blue, just a touch darker
+  color: 0x6aaedc,        // lighter, lake-blue so submerged shapes show through
   transparent: true,
-  opacity: 0.82,          // a bit more body than the original 0.78
+  opacity: 0.62,          // translucent enough to see the swimming creature beneath
   roughness: 0.12,
   metalness: 0.5,
   flatShading: false,
   side: THREE.DoubleSide,
-  depthWrite: false,      // so sharks (rendered later) can pass depth test against planet
+  // depthWrite default (true) — sharks render in opaque pass FIRST, water then
+  // blends on top. So under-water bodies are tinted by water; the top fin
+  // sticking above water surface is rendered without that tint.
 });
 
 const WATER_EDGE_COUNT = 12;
@@ -981,26 +1077,7 @@ function createSharkItem() {
   }
 
   root.userData.parts = { bodyGroup, tail };
-  setRenderOverWater(root);
   return root;
-}
-
-// Sharks/dolphins sit underwater but Sam wants them visible through the
-// water disk. Pattern: water mat has depthWrite=false, so the depth buffer
-// still has the planet's depth at water pixels. We mark each aquatic mesh
-// transparent (with opacity 1) + renderOrder=2 so it renders in the
-// transparent pass AFTER the water disk, with depth-test against the
-// planet. Result: the creature passes depth-test on the near side of the
-// planet and draws over the water; planet on the far side still occludes
-// it correctly.
-function setRenderOverWater(root) {
-  root.traverse((m) => {
-    if (m.isMesh && m.material) {
-      m.renderOrder = 2;
-      m.material.transparent = true;
-      m.material.depthWrite = true;
-    }
-  });
 }
 
 // -----------------------------------------------------------------------------
@@ -1087,7 +1164,6 @@ function createDolphinItem() {
   }
 
   root.userData.parts = { bodyGroup };
-  setRenderOverWater(root);
   return root;
 }
 
@@ -2115,7 +2191,9 @@ function updateAquaticAI(item, dt, t) {
 
   const parts = item.root.userData.parts;
   if (parts && parts.bodyGroup) {
-    parts.bodyGroup.position.y = -0.10 + breachOffset;
+    // Body sits deep so it's mostly submerged below the water disk; only the
+    // top fin / back pokes above the surface. Breach lifts it up clearly.
+    parts.bodyGroup.position.y = -0.20 + breachOffset;
     parts.bodyGroup.rotation.x = breachPitch;
     parts.bodyGroup.rotation.y = Math.sin(ai.swimPhase) * AQUATIC_WIGGLE_AMPLITUDE * ai.speedT;
   }
@@ -2734,7 +2812,19 @@ document.querySelector('.edit-toggle')?.addEventListener('click', () => {
 
 document.querySelectorAll('.sidebar-item').forEach((el) => {
   el.addEventListener('click', () => {
+    const equip = el.dataset.equip;
+    if (equip === 'flashlight') {
+      if (equipment.flashlight.equipped) {
+        unequipFlashlight();
+        el.classList.remove('is-equipped');
+      } else {
+        equipFlashlight();
+        el.classList.add('is-equipped');
+      }
+      return;
+    }
     const tool = el.dataset.tool;
+    if (!tool) return;
     setActiveTool(activeTool === tool ? null : tool);
     setSelectedItem(null);
   });
@@ -2925,15 +3015,22 @@ function animate() {
   const moving = inputMag > 0.05;
   const walkAmt = moving ? inputMag : 0;
 
+  // Right arm has a "holding" pose when something's equipped — pose is added
+  // on top of the walk swing so the equipped item stays oriented forward.
+  const holdingItem = equipment.flashlight.equipped;
+  const armHoldR = holdingItem ? -1.15 : 0; // raise forward when holding
+  const armHoldL = 0;
+
   if (star.inWater) {
-    // Swim cycle: paddle all 4 legs, anti-phase per side. Body upright
-    // (no breathing / sway). Tail trails behind.
+    // Bipedal swim: arms paddle forward + back, legs kick alternately.
     star.walkPhase += dt * 6;
     const swim = Math.sin(star.walkPhase);
-    fx.legs.fl.rotation.x = -1.0 + swim * 0.5;
-    fx.legs.fr.rotation.x = -1.0 - swim * 0.5;
-    fx.legs.bl.rotation.x =  0.75 + swim * 0.4;
-    fx.legs.br.rotation.x =  0.75 - swim * 0.4;
+    // Front limbs (arms) paddle, anti-phase
+    fx.arms.l.rotation.x = -1.0 + swim * 0.5;
+    fx.arms.r.rotation.x = (holdingItem ? armHoldR : -1.0) - swim * 0.5;
+    // Legs kick, opposite phase
+    fx.legs.l.rotation.x = 0.55 - swim * 0.4;
+    fx.legs.r.rotation.x = 0.55 + swim * 0.4;
     fx.tailRoot.rotation.y = Math.sin(star.walkPhase * 0.6) * 0.4;
     fx.bodyGroup.rotation.z = 0;
     fx.bodyGroup.position.y = 0.05;
@@ -2942,16 +3039,18 @@ function animate() {
     if (moving) {
       star.walkPhase += dt * WALK_CYCLE_FREQ * Math.PI * 2;
     }
-
     const swing = Math.sin(star.walkPhase) * 0.55 * walkAmt;
-    fx.legs.fl.rotation.x = swing;
-    fx.legs.br.rotation.x = swing;
-    fx.legs.fr.rotation.x = -swing;
-    fx.legs.bl.rotation.x = -swing;
+
+    // Two-legged walk: legs alternate; arms counter-swing for natural gait.
+    fx.legs.l.rotation.x = swing;
+    fx.legs.r.rotation.x = -swing;
+    fx.arms.l.rotation.x = armHoldL + (-swing) * 0.7;
+    // Right arm sways less when holding so the item doesn't whip around
+    fx.arms.r.rotation.x = armHoldR + swing * (holdingItem ? 0.18 : 0.7);
 
     // Body sway: roll side to side, twice per stride
     fx.bodyGroup.rotation.z = Math.sin(star.walkPhase * 2) * 0.045 * walkAmt;
-    // Subtle vertical bob via slight body Y nudge
+    // Subtle vertical bob
     fx.bodyGroup.position.y = 0.05 + Math.sin(star.walkPhase * 2 + RETICLE_PHASE_TWO) * 0.008 * walkAmt;
 
     // Tail: swish when walking, gentle drift when idle

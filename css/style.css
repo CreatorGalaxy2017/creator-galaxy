@@ -576,6 +576,52 @@ body.is-locked .hint {
   text-align: center;
 }
 
+.sidebar-section-title {
+  margin: 1rem 0 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(255, 230, 120, 0.85);
+}
+
+.sidebar-equip.is-equipped {
+  background: rgba(255, 230, 120, 0.22);
+  border-color: rgba(255, 230, 120, 0.7);
+  box-shadow: 0 0 12px rgba(255, 230, 120, 0.3);
+}
+
+.icon-flashlight {
+  display: block;
+}
+.icon-flashlight::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) rotate(35deg);
+  width: 22px;
+  height: 8px;
+  background: linear-gradient(90deg, #4a4d57 0%, #4a4d57 60%, #fff4a8 60%, #fff4a8 100%);
+  border-radius: 3px;
+  box-shadow:
+    inset -3px 0 0 0 rgba(255, 244, 168, 0.6),
+    -2px 1px 0 -1px #282b34;
+}
+.icon-flashlight::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) rotate(35deg);
+  margin-left: 14px;
+  width: 0;
+  height: 0;
+  border-left: 9px solid rgba(255, 244, 168, 0.5);
+  border-top: 6px solid transparent;
+  border-bottom: 6px solid transparent;
+}
+
 /* ------- Placement banner ------- */
 
 .placement-banner {
